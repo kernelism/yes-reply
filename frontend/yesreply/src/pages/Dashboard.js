@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Mail, Search, Send, Inbox, X, Sun, Moon, Settings, Plus, Paperclip, Smile, ArrowLeft, Star, Trash2, RefreshCw, Reply, Forward, Clock, TrendingUp, TrendingDown, DollarSign, BarChart3, Activity, MessageSquare, User, Zap, Target, Award, TrendingUp as Flame, Timer, CircleDollarSign, Sparkles, Trophy, Crown, Medal, CheckCircle2, Wallet, LogOut, Bell } from 'lucide-react';
+import { Mail, Search, Send, Inbox, X, Sun, Moon, Settings, Plus, Paperclip, Smile, ArrowLeft, Star, Trash2, RefreshCw, Reply, Forward, Clock, TrendingUp, TrendingDown, DollarSign, BarChart3, Activity, MessageSquare, User, Zap, Target, Award, TrendingUp as Flame, Timer, CircleDollarSign, Sparkles, Trophy, Crown, Medal, CheckCircle2, Wallet, LogOut, Bell, MoreVertical, FileText, Calendar, UserCircle } from 'lucide-react';
 import Payments from './Payments';
 import { useNavigate } from 'react-router-dom';
 
@@ -377,6 +377,7 @@ export default function YesReplyDashboard() {
   const [showCompose, setShowCompose] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [replyText, setReplyText] = useState('');
+  const [replyHtmlBody, setReplyHtmlBody] = useState(null);
   const [selectedEmails, setSelectedEmails] = useState([]);
   const [hoveredEmail, setHoveredEmail] = useState(null);
   const [animateStats, setAnimateStats] = useState(false);
@@ -419,6 +420,21 @@ export default function YesReplyDashboard() {
   // Thread state
   const [fullThread, setFullThread] = useState(null);
   const [isLoadingThread, setIsLoadingThread] = useState(false);
+  const [showThreadMessageDropdown, setShowThreadMessageDropdown] = useState(false);
+  
+  // Smart Summary state
+  const [showSummaryModal, setShowSummaryModal] = useState(false);
+  const [summary, setSummary] = useState('');
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [summaryError, setSummaryError] = useState(null);
+  
+  // Meeting Scheduling state
+  const [showMeetingModal, setShowMeetingModal] = useState(false);
+  const [meetingDate, setMeetingDate] = useState('');
+  const [meetingTime, setMeetingTime] = useState('');
+  const [meetingDuration, setMeetingDuration] = useState(30); // minutes
+  const [meetingLocation, setMeetingLocation] = useState('');
+  const [meetingDescription, setMeetingDescription] = useState('');
   
   // Gamification state
   const [currentStreak, setCurrentStreak] = useState(3);
@@ -539,6 +555,306 @@ export default function YesReplyDashboard() {
       setUnreadNotificationCount(prev => Math.max(0, prev - 1));
     } catch (error) {
       console.error('Error marking notification as read:', error);
+    }
+  };
+  
+  // Generate Google Calendar link
+  const generateGoogleCalendarLink = (date, time, duration, location, description) => {
+    const dateObj = new Date(`${date}T${time}`);
+    const endTime = new Date(dateObj.getTime() + duration * 60000);
+    
+    // Format dates for Google Calendar (YYYYMMDDTHHMMSS)
+    const formatGoogleDate = (d) => {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hours = String(d.getHours()).padStart(2, '0');
+      const minutes = String(d.getMinutes()).padStart(2, '0');
+      const seconds = String(d.getSeconds()).padStart(2, '0');
+      return `${year}${month}${day}T${hours}${minutes}${seconds}`;
+    };
+    
+    const meetingTitle = selectedThread?.subject || 'Meeting Invitation';
+    const startDate = formatGoogleDate(dateObj);
+    const endDate = formatGoogleDate(endTime);
+    
+    // Build Google Calendar URL
+    const params = new URLSearchParams({
+      action: 'TEMPLATE',
+      text: meetingTitle,
+      dates: `${startDate}/${endDate}`,
+      details: description || '',
+      location: location || '',
+      sf: 'true',
+      output: 'xml'
+    });
+    
+    return `https://calendar.google.com/calendar/render?${params.toString()}`;
+  };
+  
+  // Generate meeting message and ICS file
+  const generateMeetingMessage = (date, time, duration, location, description) => {
+    const dateObj = new Date(`${date}T${time}`);
+    const endTime = new Date(dateObj.getTime() + duration * 60000);
+    
+    const formatDate = (d) => {
+      return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    };
+    
+    const formatTime = (d) => {
+      return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    };
+    
+    // Get recipient name from selected thread
+    const recipientName = selectedThread?.sender?.first_name || selectedThread?.receiver?.first_name || '';
+    const greeting = recipientName ? `Hi ${recipientName},` : 'Hi there,';
+    
+    // Generate Google Calendar link
+    const googleCalendarLink = generateGoogleCalendarLink(date, time, duration, location, description);
+    
+    // Build meeting details
+    let message = `${greeting}\n\n`;
+    message += `I'd like to schedule a meeting with you. Here are the details:\n\n`;
+    message += `📅 Date: ${formatDate(dateObj)}\n`;
+    message += `🕐 Time: ${formatTime(dateObj)} - ${formatTime(endTime)}\n`;
+    message += `⏱️ Duration: ${duration} minutes\n`;
+    
+    if (location) {
+      message += `📍 Location: ${location}\n`;
+    }
+    
+    if (description) {
+      message += `\n📝 Details:\n${description}\n`;
+    }
+    
+    message += `\n📎 Add to Calendar:\n`;
+    message += `\nClick here to add to Google Calendar:\n${googleCalendarLink}\n\n`;
+    message += `Or use the attached .ics file to add to any calendar application\n`;
+    
+    message += `\nPlease let me know if this time works for you, or if you'd prefer an alternative time.\n\n`;
+    message += `Looking forward to our conversation!\n\n`;
+    message += `Best regards,\n`;
+    message += currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Best regards';
+    
+    return message;
+  };
+  
+  // Create ICS file attachment
+  const createICSAttachment = async (date, time, duration, location, description) => {
+    const dateObj = new Date(`${date}T${time}`);
+    const endTime = new Date(dateObj.getTime() + duration * 60000);
+    
+    // Get current user info
+    const organizerName = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Meeting Organizer';
+    const organizerEmail = currentUser ? `${currentUser.username}@yesreply.tech` : 'organizer@yesreply.tech';
+    
+    // Get recipient info from selected thread
+    const recipientEmail = selectedThread?.receiver?.email || selectedThread?.sender?.email || 'recipient@yesreply.tech';
+    
+    const meetingTitle = selectedThread?.subject || 'Meeting Invitation';
+    
+    // Format dates for ICS (UTC format: YYYYMMDDTHHMMSSZ)
+    const formatICSDate = (d) => {
+      const utc = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
+      return utc.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    };
+    
+    const dtstart = formatICSDate(dateObj);
+    const dtend = formatICSDate(endTime);
+    const dtstamp = formatICSDate(new Date());
+    
+    // Generate ICS content
+    const icsContent = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//YesReply//Meeting Scheduler//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:REQUEST',
+      'BEGIN:VEVENT',
+      `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@yesreply.tech`,
+      `DTSTAMP:${dtstamp}`,
+      `DTSTART:${dtstart}`,
+      `DTEND:${dtend}`,
+      `SUMMARY:${meetingTitle}`,
+      `ORGANIZER;CN=${organizerName}:MAILTO:${organizerEmail}`,
+      `ATTENDEE;CN=${recipientEmail};RSVP=TRUE:MAILTO:${recipientEmail}`,
+      'STATUS:CONFIRMED',
+      'SEQUENCE:0',
+    ];
+    
+    if (description) {
+      icsContent.push(`DESCRIPTION:${description.replace(/\n/g, '\\n')}`);
+    }
+    
+    if (location) {
+      icsContent.push(`LOCATION:${location}`);
+    }
+    
+    icsContent.push(
+      'BEGIN:VALARM',
+      'TRIGGER:-PT15M',
+      'ACTION:DISPLAY',
+      `DESCRIPTION:Reminder: ${meetingTitle}`,
+      'END:VALARM',
+      'END:VEVENT',
+      'END:VCALENDAR'
+    );
+    
+    const icsText = icsContent.join('\r\n');
+    
+    // Convert to base64
+    const icsBase64 = btoa(unescape(encodeURIComponent(icsText)));
+    
+    return {
+      filename: `meeting_${date.replace(/-/g, '')}_${time.replace(/:/g, '')}.ics`,
+      content_type: 'text/calendar; charset=utf-8; method=REQUEST',
+      data: icsBase64,
+      size: icsText.length
+    };
+  };
+  
+  // Generate HTML version of meeting message with clickable link
+  const generateMeetingMessageHTML = (date, time, duration, location, description) => {
+    const dateObj = new Date(`${date}T${time}`);
+    const endTime = new Date(dateObj.getTime() + duration * 60000);
+    
+    const formatDate = (d) => {
+      return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    };
+    
+    const formatTime = (d) => {
+      return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    };
+    
+    // Get recipient name from selected thread
+    const recipientName = selectedThread?.sender?.first_name || selectedThread?.receiver?.first_name || '';
+    const greeting = recipientName ? `Hi ${recipientName},` : 'Hi there,';
+    
+    // Generate Google Calendar link
+    const googleCalendarLink = generateGoogleCalendarLink(date, time, duration, location, description);
+    
+    // Build HTML message
+    let htmlMessage = `<p>${greeting}</p>`;
+    htmlMessage += `<p>I'd like to schedule a meeting with you. Here are the details:</p>`;
+    htmlMessage += `<ul style="list-style: none; padding-left: 0;">`;
+    htmlMessage += `<li>📅 <strong>Date:</strong> ${formatDate(dateObj)}</li>`;
+    htmlMessage += `<li>🕐 <strong>Time:</strong> ${formatTime(dateObj)} - ${formatTime(endTime)}</li>`;
+    htmlMessage += `<li>⏱️ <strong>Duration:</strong> ${duration} minutes</li>`;
+    
+    if (location) {
+      htmlMessage += `<li>📍 <strong>Location:</strong> ${location}</li>`;
+    }
+    
+    htmlMessage += `</ul>`;
+    
+    if (description) {
+      htmlMessage += `<p><strong>📝 Details:</strong><br>${description.replace(/\n/g, '<br>')}</p>`;
+    }
+    
+    htmlMessage += `<p><strong>📎 Add to Calendar:</strong></p>`;
+    htmlMessage += `<p style="margin: 10px 0;">`;
+    htmlMessage += `<a href="${googleCalendarLink}" style="display: inline-block; padding: 10px 20px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;" target="_blank">📅 Add to Google Calendar</a>`;
+    htmlMessage += `</p>`;
+    htmlMessage += `<p style="color: #666; font-size: 12px;">Or use the attached .ics file to add to any calendar application</p>`;
+    
+    htmlMessage += `<p>Please let me know if this time works for you, or if you'd prefer an alternative time.</p>`;
+    htmlMessage += `<p>Looking forward to our conversation!</p>`;
+    htmlMessage += `<p>Best regards,<br>${currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Best regards'}</p>`;
+    
+    return htmlMessage;
+  };
+  
+  // Handle meeting scheduling
+  const handleScheduleMeeting = async () => {
+    if (!meetingDate || !meetingTime || !selectedThread) {
+      alert('Please fill in all required fields (Date and Time)');
+      return;
+    }
+    
+    try {
+      // Generate meeting message (plain text)
+      const meetingMessage = generateMeetingMessage(
+        meetingDate,
+        meetingTime,
+        meetingDuration,
+        meetingLocation,
+        meetingDescription
+      );
+      
+      // Generate HTML version with clickable link
+      const meetingMessageHTML = generateMeetingMessageHTML(
+        meetingDate,
+        meetingTime,
+        meetingDuration,
+        meetingLocation,
+        meetingDescription
+      );
+      
+      // Create ICS attachment
+      const icsAttachment = await createICSAttachment(
+        meetingDate,
+        meetingTime,
+        meetingDuration,
+        meetingLocation,
+        meetingDescription
+      );
+      
+      // Set reply text with meeting message
+      setReplyText(meetingMessage);
+      
+      // Store HTML version for sending (we'll need to update the reply function to use it)
+      // For now, we'll store it in a state or pass it along
+      
+      // Set attachment (ICS file)
+      setReplyAttachments([icsAttachment]);
+      
+      // Store HTML message in a way that can be used when sending
+      // We'll need to check how the reply function handles HTML
+      
+      // Close modal
+      setShowMeetingModal(false);
+      
+      // Optionally auto-focus the reply textarea
+      // The user can now review and send the email with the meeting invite
+    } catch (error) {
+      console.error('Error generating meeting invite:', error);
+      alert('Failed to generate meeting invite. Please try again.');
+    }
+  };
+  
+  // Fetch smart summary for an email thread
+  const fetchSmartSummary = async (emailId) => {
+    setIsLoadingSummary(true);
+    setSummaryError(null);
+    setSummary('');
+    setShowSummaryModal(true);
+    
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        setSummaryError('Authentication required');
+        return;
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/emails/${emailId}/smart-summary`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSummary(data.summary || 'No summary available');
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to generate summary' }));
+        setSummaryError(errorData.detail || 'Failed to generate summary');
+      }
+    } catch (error) {
+      console.error('Error fetching smart summary:', error);
+      setSummaryError('Failed to generate summary. Please try again.');
+    } finally {
+      setIsLoadingSummary(false);
     }
   };
   
@@ -859,13 +1175,14 @@ export default function YesReplyDashboard() {
         },
         body: JSON.stringify({
           body: replyText,
-          html_body: null,
+          html_body: replyHtmlBody || null,
           attachments: replyAttachments.length > 0 ? JSON.stringify(replyAttachments) : null
         })
       });
       
       if (replyResponse.ok) {
         setReplyText('');
+        setReplyHtmlBody(null);
         setReplyAttachments([]);
         fetchInboxEmails();
         setSelectedThread(null);
@@ -902,11 +1219,14 @@ export default function YesReplyDashboard() {
       if (showNotifications && !event.target.closest('.notification-dropdown')) {
         setShowNotifications(false);
       }
+      if (showThreadMessageDropdown && !event.target.closest('.thread-message-dropdown-menu')) {
+        setShowThreadMessageDropdown(false);
+      }
     };
     
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showNotifications]);
+  }, [showNotifications, showThreadMessageDropdown]);
   
   useEffect(() => {
     const token = getAuthToken();
@@ -1729,6 +2049,59 @@ export default function YesReplyDashboard() {
                             }
                           />
                 </button>
+                <div className="relative thread-message-dropdown-menu">
+                  <button
+                    onClick={() => setShowThreadMessageDropdown(!showThreadMessageDropdown)}
+                    className={`px-3 py-2 text-sm font-medium border transition-all ${
+                      isDark
+                        ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                        : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                    title="AI Assist"
+                  >
+                    AI Assist
+                  </button>
+                  
+                  {showThreadMessageDropdown && (
+                    <div className={`absolute right-0 mt-2 w-56 border z-50 ${
+                      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                    }`}>
+                      <div className="py-1">
+                        <button
+                          onClick={() => {
+                            setShowThreadMessageDropdown(false);
+                            if (selectedThread) {
+                              fetchSmartSummary(selectedThread.id);
+                            }
+                          }}
+                          className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all ${
+                            isDark
+                              ? 'text-slate-300 hover:bg-slate-700'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <FileText size={16} />
+                          <span>Smart summary</span>
+                        </button>
+                        
+                        <button
+                          onClick={() => {
+                            setShowThreadMessageDropdown(false);
+                            setShowMeetingModal(true);
+                          }}
+                          className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all ${
+                            isDark
+                              ? 'text-slate-300 hover:bg-slate-700'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Calendar size={16} />
+                          <span>Schedule a meeting</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
                 <button
                           onClick={() => {
                             if (window.confirm('Delete this email?')) {
@@ -1869,7 +2242,7 @@ export default function YesReplyDashboard() {
                                   isDark ? 'bg-slate-800 border-slate-700' : 'bg-slate-50 border-slate-200'
                                 }`}>
                                   <Paperclip size={12} />
-                                  <span>{file.name}</span>
+                                  <span>{file.filename || file.name || 'Attachment'}</span>
                                   <button
                                     onClick={() => setReplyAttachments(prev => prev.filter((_, i) => i !== idx))}
                                     className={isDark ? 'text-slate-400 hover:text-white' : 'text-slate-600 hover:text-slate-900'}
@@ -2116,6 +2489,271 @@ export default function YesReplyDashboard() {
                     {isSending ? 'Sending...' : 'Send'}
                   </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Smart Summary Modal */}
+      {showSummaryModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowSummaryModal(false)}
+          />
+          <div className={`relative w-full max-w-2xl max-h-[80vh] overflow-hidden border ${
+            isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
+          }`}>
+            {/* Header */}
+            <div className={`flex items-center justify-between p-6 border-b ${
+              isDark ? 'border-slate-800' : 'border-slate-200'
+            }`}>
+              <div className="flex items-center gap-3">
+                <FileText size={20} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
+                <h2 className={`text-xl font-semibold ${
+                  isDark ? 'text-white' : 'text-slate-900'
+                }`}>
+                  Smart Summary
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowSummaryModal(false)}
+                className={`p-2 transition-colors ${
+                  isDark 
+                    ? 'text-slate-400 hover:text-white hover:bg-slate-800' 
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className={`p-6 overflow-y-auto max-h-[calc(80vh-140px)] ${
+              isDark ? 'text-slate-300' : 'text-slate-700'
+            }`}>
+              {isLoadingSummary ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="flex flex-col items-center gap-3">
+                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
+                    <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                      Generating summary...
+                    </p>
+                  </div>
+                </div>
+              ) : summaryError ? (
+                <div className={`p-4 border ${
+                  isDark 
+                    ? 'bg-red-900/20 border-red-800 text-red-300' 
+                    : 'bg-red-50 border-red-200 text-red-700'
+                }`}>
+                  <p className="font-medium">Error</p>
+                  <p className="text-sm mt-1">{summaryError}</p>
+                </div>
+              ) : summary ? (
+                <div className="prose prose-slate max-w-none">
+                  <div className={`whitespace-pre-wrap ${
+                    isDark ? 'text-slate-300' : 'text-slate-700'
+                  }`}>
+                    {summary}
+                  </div>
+                </div>
+              ) : (
+                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                  No summary available.
+                </p>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className={`flex items-center justify-end p-6 border-t ${
+              isDark ? 'border-slate-800' : 'border-slate-200'
+            }`}>
+              <button
+                onClick={() => setShowSummaryModal(false)}
+                className={`px-6 py-2 text-sm font-medium transition-colors ${
+                  isDark
+                    ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Schedule Meeting Modal */}
+      {showMeetingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div 
+            className="absolute inset-0 bg-black/50"
+            onClick={() => setShowMeetingModal(false)}
+          />
+          <div className={`relative w-full max-w-md overflow-hidden border ${
+            isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
+          }`}>
+            {/* Header */}
+            <div className={`flex items-center justify-between p-6 border-b ${
+              isDark ? 'border-slate-800' : 'border-slate-200'
+            }`}>
+              <div className="flex items-center gap-3">
+                <Calendar size={20} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
+                <h2 className={`text-xl font-semibold ${
+                  isDark ? 'text-white' : 'text-slate-900'
+                }`}>
+                  Schedule Meeting
+                </h2>
+              </div>
+              <button
+                onClick={() => setShowMeetingModal(false)}
+                className={`p-2 transition-colors ${
+                  isDark 
+                    ? 'text-slate-400 hover:text-white hover:bg-slate-800' 
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+                }`}
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className={`p-6 space-y-4 ${
+              isDark ? 'text-slate-300' : 'text-slate-700'
+            }`}>
+              {/* Date */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
+                  Date <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={meetingDate}
+                  onChange={(e) => setMeetingDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className={`w-full px-4 py-2 border ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-700 text-white'
+                      : 'bg-white border-slate-200 text-slate-900'
+                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  required
+                />
+              </div>
+
+              {/* Time */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
+                  Time <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="time"
+                  value={meetingTime}
+                  onChange={(e) => setMeetingTime(e.target.value)}
+                  className={`w-full px-4 py-2 border ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-700 text-white'
+                      : 'bg-white border-slate-200 text-slate-900'
+                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                  required
+                />
+              </div>
+
+              {/* Duration */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
+                  Duration (minutes)
+                </label>
+                <select
+                  value={meetingDuration}
+                  onChange={(e) => setMeetingDuration(parseInt(e.target.value))}
+                  className={`w-full px-4 py-2 border ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-700 text-white'
+                      : 'bg-white border-slate-200 text-slate-900'
+                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                >
+                  <option value={15}>15 minutes</option>
+                  <option value={30}>30 minutes</option>
+                  <option value={45}>45 minutes</option>
+                  <option value={60}>1 hour</option>
+                  <option value={90}>1.5 hours</option>
+                  <option value={120}>2 hours</option>
+                </select>
+              </div>
+
+              {/* Location */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
+                  Location (optional)
+                </label>
+                <input
+                  type="text"
+                  value={meetingLocation}
+                  onChange={(e) => setMeetingLocation(e.target.value)}
+                  placeholder="e.g., Conference Room A, Zoom link, etc."
+                  className={`w-full px-4 py-2 border ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500'
+                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className={`block text-sm font-medium mb-2 ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
+                  Description (optional)
+                </label>
+                <textarea
+                  value={meetingDescription}
+                  onChange={(e) => setMeetingDescription(e.target.value)}
+                  placeholder="Add any additional details about the meeting..."
+                  rows={3}
+                  className={`w-full px-4 py-2 border ${
+                    isDark
+                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500'
+                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className={`flex items-center justify-end gap-3 p-6 border-t ${
+              isDark ? 'border-slate-800' : 'border-slate-200'
+            }`}>
+              <button
+                onClick={() => setShowMeetingModal(false)}
+                className={`px-6 py-2 text-sm font-medium transition-colors ${
+                  isDark
+                    ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleScheduleMeeting}
+                disabled={!meetingDate || !meetingTime}
+                className={`px-6 py-2 text-sm font-medium text-white transition-colors ${
+                  !meetingDate || !meetingTime
+                    ? 'bg-slate-600 cursor-not-allowed'
+                    : 'bg-blue-600 hover:bg-blue-700'
+                }`}
+              >
+                Create Meeting Invite
+              </button>
             </div>
           </div>
         </div>
