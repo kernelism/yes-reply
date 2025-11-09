@@ -213,6 +213,12 @@ class EmailListResponse(BaseModel):
     has_more: bool
 
 
+class SmartSummaryResponse(BaseModel):
+    """Response containing AI-generated email thread summary"""
+    summary: str
+    thread_id: str
+
+
 class BulkEmailOperation(BaseModel):
     """Schema for bulk email operations"""
     email_ids: List[str] = Field(..., min_items=1)

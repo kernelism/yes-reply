@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
-  User, Mail, Briefcase, MapPin, Building2, Globe, 
-  Linkedin, Twitter, Calendar, Edit2, Save, X, 
-  Target, Zap, ArrowLeft, Sun, Moon, Check, DollarSign
+  Edit2, ArrowLeft, Sun, Moon
 } from 'lucide-react';
 
 const Profile = () => {
@@ -15,6 +13,9 @@ const Profile = () => {
   const [userData, setUserData] = useState(null);
   const [currentUser, setCurrentUser] = useState(null);
   const [formData, setFormData] = useState({});
+  const [validationErrors, setValidationErrors] = useState({});
+  const [profilePicture, setProfilePicture] = useState(null);
+  const [profilePicturePreview, setProfilePicturePreview] = useState(null);
   const [isDark, setIsDark] = useState(() => {
     const saved = localStorage.getItem('theme');
     return saved ? saved === 'dark' : false;
@@ -118,6 +119,10 @@ const Profile = () => {
           calendly_url: currentData.calendly_url || '',
           price_limit: currentData.price_limit || 2.0
         });
+        // Set profile picture preview if available
+        if (currentData.profile_picture_url) {
+          setProfilePicturePreview(currentData.profile_picture_url);
+        }
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
@@ -127,18 +132,128 @@ const Profile = () => {
     }
   };
 
+  const isValidUrl = (url) => {
+    if (!url || url.trim() === '') return true; // Allow empty values
+    try {
+      // More flexible URL pattern that accepts http://, https://, or just domain
+      const urlPattern = /^(https?:\/\/)?([\da-z\.-]+)\.([a-z\.]{2,6})([\/\w \.-]*)*\/?$/i;
+      return urlPattern.test(url.trim());
+    } catch {
+      return false;
+    }
+  };
+
   const handleInputChange = (field, value) => {
+    // For name fields, filter out invalid characters before updating
+    if (field === 'first_name' || field === 'last_name') {
+      // Allow only letters, spaces, hyphens, and apostrophes
+      const filteredValue = value.replace(/[^a-zA-Z\s'-]/g, '');
+      setFormData(prev => ({ ...prev, [field]: filteredValue }));
+      
+      // Clear validation errors if value is valid
+      if (filteredValue === value || !filteredValue) {
+        setValidationErrors(prev => {
+          const newErrors = { ...prev };
+          delete newErrors[field];
+          return newErrors;
+        });
+      }
+      return;
+    }
+
+    // For other fields, update form data normally
     setFormData(prev => ({ ...prev, [field]: value }));
+
+    // Validate URL fields
+    const urlFields = ['linkedin_url', 'twitter_url', 'website_url', 'calendly_url'];
+    if (urlFields.includes(field)) {
+      if (value && value.trim() && !isValidUrl(value)) {
+        setValidationErrors(prev => ({ ...prev, [field]: 'Please enter a valid URL (e.g., https://example.com)' }));
+      } else {
+        setValidationErrors(prev => {
+          const newErrors = { ...prev };
+          delete newErrors[field];
+          return newErrors;
+        });
+      }
+    }
+  };
+
+  const handleProfilePictureChange = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+      // Validate file size (max 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Image size should be less than 5MB');
+        return;
+      }
+      setProfilePicture(file);
+      // Create preview
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setProfilePicturePreview(reader.result);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSave = async () => {
+    // Check for validation errors
+    if (Object.keys(validationErrors).length > 0) {
+      alert('Please fix validation errors before saving.');
+      return;
+    }
+
+    // Validate URL fields one more time before saving
+    const urlFields = ['linkedin_url', 'twitter_url', 'website_url', 'calendly_url'];
+    for (const field of urlFields) {
+      const value = formData[field];
+      if (value && value.trim() && !isValidUrl(value)) {
+        setValidationErrors(prev => ({ ...prev, [field]: 'Please enter a valid URL (e.g., https://example.com)' }));
+        alert('Please fix validation errors before saving.');
+        return;
+      }
+    }
+
     setIsSaving(true);
     try {
       const token = localStorage.getItem('access_token');
+      
+      // If profile picture is selected, upload it first
+      let profilePictureUrl = userData.profile_picture_url || null;
+      if (profilePicture) {
+        const formDataPicture = new FormData();
+        formDataPicture.append('file', profilePicture);
+        
+        const uploadResponse = await fetch(
+          `${process.env.REACT_APP_BACKEND_API_PATH}/api/users/${userData.id}/profile-picture`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`
+            },
+            body: formDataPicture
+          }
+        );
+
+        if (uploadResponse.ok) {
+          const uploadData = await uploadResponse.json();
+          profilePictureUrl = uploadData.profile_picture_url;
+        } else {
+          console.error('Failed to upload profile picture');
+        }
+      }
+
       // Convert looking_for array to JSON string if it exists
       const updateData = {
         ...formData,
-        looking_for: formData.looking_for && formData.looking_for.length > 0 ? formData.looking_for : null
+        looking_for: formData.looking_for && formData.looking_for.length > 0 ? formData.looking_for : null,
+        profile_picture_url: profilePictureUrl
       };
       
       const response = await fetch(
@@ -159,6 +274,9 @@ const Profile = () => {
 
       const updatedData = await response.json();
       setUserData(updatedData);
+      setProfilePicture(null);
+      setProfilePicturePreview(updatedData.profile_picture_url || null);
+      setValidationErrors({}); // Clear validation errors on successful save
       setIsEditing(false);
       alert('Profile updated successfully!');
     } catch (error) {
@@ -225,6 +343,8 @@ const Profile = () => {
       calendly_url: userData.calendly_url || '',
       price_limit: userData.price_limit || 2.0
     });
+    setProfilePicture(null);
+    setProfilePicturePreview(userData.profile_picture_url || null);
     setIsEditing(false);
   };
 
@@ -328,67 +448,185 @@ const Profile = () => {
       </div>
 
       {/* Main Content - Dashboard Style */}
-      <div className="max-w-4xl mx-auto px-6 py-12">
+      <div className="max-w-5xl mx-auto px-6 py-12">
         {/* Profile Header */}
-        <div className="mb-12">
-          <div className="flex items-start gap-4 mb-8">
-            <div className={`w-16 h-16 flex items-center justify-center text-xl font-bold ${
-              isDark ? 'bg-slate-800 text-slate-200' : 'bg-slate-100 text-slate-800'
-            }`}>
-              {userData.first_name?.[0]}{userData.last_name?.[0]}
+        <div className={`mb-12 rounded-2xl p-8 transition-all ${
+          isDark 
+            ? 'bg-slate-800/50 border border-slate-700/50' 
+            : 'bg-white border border-slate-200 shadow-lg'
+        }`}>
+          <div className="flex items-start gap-6 mb-6">
+            {/* Avatar */}
+            <div className="relative group">
+              <div className={`absolute inset-0 rounded-full border-2 ${
+                isDark ? 'border-slate-600' : 'border-slate-300'
+              }`}></div>
+              <div className={`relative w-24 h-24 flex items-center justify-center text-2xl font-bold rounded-full overflow-hidden ${
+                isDark ? 'bg-slate-700 text-slate-200' : 'bg-slate-200 text-slate-800'
+              }`}>
+                {profilePicturePreview || userData.profile_picture_url ? (
+                  <img 
+                    src={profilePicturePreview || userData.profile_picture_url} 
+                    alt={`${userData.first_name} ${userData.last_name}`}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span>{userData.first_name?.[0]}{userData.last_name?.[0]}</span>
+                )}
+              </div>
+              {isOwnProfile && isEditing && (
+                <label className="absolute inset-0 rounded-full cursor-pointer flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Edit2 size={20} className="text-white" />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={handleProfilePictureChange}
+                  />
+                </label>
+              )}
             </div>
             <div className="flex-1 min-w-0">
-              <h1 className={`text-3xl font-light tracking-tight mb-2 ${
+              <h1 className={`text-4xl font-bold tracking-tight mb-3 ${
                 isDark ? 'text-white' : 'text-slate-900'
               }`}>
                 {userData.first_name} {userData.last_name}
               </h1>
-              <div className="space-y-1">
-                <div className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+              <div className="space-y-2">
+                <div className={`text-sm font-medium ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
                   {userData.username}@yesreply.tech
                 </div>
-                <div className={`text-xs ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                <div className={`text-xs ${
+                  isDark ? 'text-slate-500' : 'text-slate-500'
+                }`}>
                   {userData.email}
+                </div>
+                {/* Links & Contact */}
+                <div className={`flex flex-wrap gap-3 mt-3 pt-3 border-t ${
+                  isDark ? 'border-slate-700' : 'border-slate-200'
+                }`}>
+                  {userData.linkedin_profile_url && (
+                    <a
+                      href={userData.linkedin_profile_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`text-xs font-medium transition-all hover:underline ${
+                        isDark 
+                          ? 'text-slate-300 hover:text-white' 
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      LinkedIn
+                    </a>
+                  )}
+                  {userData.twitter_url && (
+                    <a
+                      href={userData.twitter_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`text-xs font-medium transition-all hover:underline ${
+                        isDark 
+                          ? 'text-slate-300 hover:text-white' 
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      Twitter/X
+                    </a>
+                  )}
+                  {userData.website_url && (
+                    <a
+                      href={userData.website_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`text-xs font-medium transition-all hover:underline ${
+                        isDark 
+                          ? 'text-slate-300 hover:text-white' 
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      Website
+                    </a>
+                  )}
+                  {userData.calendly_url && (
+                    <a
+                      href={userData.calendly_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`text-xs font-medium transition-all hover:underline ${
+                        isDark 
+                          ? 'text-slate-300 hover:text-white' 
+                          : 'text-slate-700 hover:text-slate-900'
+                      }`}
+                    >
+                      Calendly
+                    </a>
+                  )}
                 </div>
               </div>
             </div>
-            <div className="flex flex-col items-end gap-2">
-              <div className={`inline-flex items-center gap-1.5 px-2 py-1 text-xs font-medium uppercase tracking-wider ${
+            <div className="flex flex-col items-end gap-3">
+              <div className={`inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider rounded-full transition-all ${
                 userData.linkedin_verified
-                  ? isDark ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                  : isDark ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-slate-100 text-slate-600 border border-slate-200'
+                  ? isDark 
+                    ? 'bg-slate-700/50 text-slate-200 border border-slate-600 shadow-lg' 
+                    : 'bg-slate-200 text-slate-800 border border-slate-400 shadow-md'
+                  : isDark 
+                    ? 'bg-slate-800/50 text-slate-400 border border-slate-700' 
+                    : 'bg-slate-100 text-slate-600 border border-slate-200'
               }`}>
                 {userData.linkedin_verified ? 'Verified' : 'Unverified'}
               </div>
               {!userData.linkedin_verified && (
                 <button
                   onClick={handleLinkedInVerify}
-                  className={`text-xs px-3 py-1 border transition-colors ${
+                  className={`text-xs px-4 py-1.5 border rounded-full transition-all font-medium ${
                     isDark 
-                      ? 'text-slate-400 hover:text-white border-slate-700 hover:bg-slate-800' 
-                      : 'text-slate-600 hover:text-slate-900 border-slate-200 hover:bg-slate-50'
+                      ? 'text-slate-300 hover:text-white border-slate-600 hover:bg-slate-800 hover:border-slate-500' 
+                      : 'text-slate-700 hover:text-slate-900 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
                   }`}
                 >
-                  Verify
+                  Verify LinkedIn
                 </button>
               )}
-              <div className={`text-xs font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-                ${userData.price_limit}/email
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${
+                isDark 
+                  ? 'bg-slate-800/50 border border-slate-700' 
+                  : 'bg-slate-100 border border-slate-300'
+              }`}>
+                <span className={`text-sm font-bold font-mono ${
+                  isDark ? 'text-slate-300' : 'text-slate-900'
+                }`}>
+                  ${userData.price_limit}/email
+                </span>
               </div>
             </div>
           </div>
         </div>
 
           {/* Profile Fields - Always Visible */}
-        <div className="space-y-8">
+        <div className="space-y-6">
           {/* Basic Info Section */}
-          <div className={`pb-8 border-b ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
+          <div className={`rounded-2xl p-8 transition-all ${
+            isDark 
+              ? 'bg-slate-800/40 border border-slate-700/50 hover:border-slate-600/50 shadow-xl' 
+              : 'bg-white border border-slate-200 shadow-lg hover:shadow-xl'
+          }`}>
+            <div className="mb-8">
+              <h2 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                About
+              </h2>
+              <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                Personal information and description
+              </p>
+            </div>
             {isOwnProfile && isEditing ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <label className={`block text-sm font-semibold mb-2 ${
+                      isDark ? 'text-slate-300' : 'text-slate-700'
                     }`}>
                       First Name
                     </label>
@@ -396,16 +634,21 @@ const Profile = () => {
                       type="text"
                       value={formData.first_name}
                       onChange={(e) => handleInputChange('first_name', e.target.value)}
-                      className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                        isDark 
-                          ? 'bg-slate-800 border-slate-700 text-white' 
-                          : 'bg-white border-slate-200 text-slate-900'
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
+                        validationErrors.first_name
+                          ? 'border-red-500 focus:ring-red-500/50'
+                          : isDark 
+                            ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                            : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                       }`}
                     />
+                    {validationErrors.first_name && (
+                      <p className="text-xs text-red-500 mt-1">{validationErrors.first_name}</p>
+                    )}
                   </div>
                   <div>
-                    <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <label className={`block text-sm font-semibold mb-2 ${
+                      isDark ? 'text-slate-300' : 'text-slate-700'
                     }`}>
                       Last Name
                     </label>
@@ -413,17 +656,22 @@ const Profile = () => {
                       type="text"
                       value={formData.last_name}
                       onChange={(e) => handleInputChange('last_name', e.target.value)}
-                      className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                        isDark 
-                          ? 'bg-slate-800 border-slate-700 text-white' 
-                          : 'bg-white border-slate-200 text-slate-900'
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
+                        validationErrors.last_name
+                          ? 'border-red-500 focus:ring-red-500/50'
+                          : isDark 
+                            ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                            : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                       }`}
                     />
+                    {validationErrors.last_name && (
+                      <p className="text-xs text-red-500 mt-1">{validationErrors.last_name}</p>
+                    )}
                   </div>
                 </div>
                 <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+                  <label className={`block text-sm font-semibold mb-2 ${
+                    isDark ? 'text-slate-300' : 'text-slate-700'
                   }`}>
                     Description
                   </label>
@@ -431,29 +679,31 @@ const Profile = () => {
                     value={formData.description}
                     onChange={(e) => handleInputChange('description', e.target.value)}
                     rows={3}
-                    className={`w-full px-3 py-2 text-sm border resize-none focus:outline-none focus:border-blue-600 ${
+                    className={`w-full px-4 py-2.5 text-sm rounded-lg border resize-none transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                       isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                        : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                     }`}
                     placeholder="A brief description about yourself..."
                   />
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+              <div className="space-y-6">
+                <div className={`p-5 rounded-xl ${
+                  isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
+                }`}>
+                  <div className={`text-sm font-semibold mb-3 ${
+                    isDark ? 'text-slate-300' : 'text-slate-700'
                   }`}>
                     Description
                   </div>
-                  <div className={`text-sm leading-relaxed ${
-                    isDark ? 'text-slate-300' : 'text-slate-700'
+                  <div className={`text-base leading-relaxed ${
+                    isDark ? 'text-slate-200' : 'text-slate-800'
                   }`}>
                     {userData.description || (
-                      <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>
-                        No description added
+                      <span className={`italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                        No description added yet. Share a bit about yourself to help others connect with you.
                       </span>
                     )}
                   </div>
@@ -463,17 +713,26 @@ const Profile = () => {
           </div>
 
           {/* Professional Info */}
-          <div className={`pb-8 border-b ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
-            <h2 className={`text-xl font-light tracking-tight mb-6 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-              Professional
-            </h2>
+          <div className={`rounded-2xl p-8 transition-all ${
+            isDark 
+              ? 'bg-slate-800/40 border border-slate-700/50 hover:border-slate-600/50 shadow-xl' 
+              : 'bg-white border border-slate-200 shadow-lg hover:shadow-xl'
+          }`}>
+            <div className="mb-8">
+              <h2 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                Professional
+              </h2>
+              <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                Career details and professional background
+              </p>
+            </div>
             
             {isOwnProfile && isEditing ? (
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <label className={`block text-sm font-semibold mb-2 ${
+                      isDark ? 'text-slate-300' : 'text-slate-700'
                     }`}>
                       Job Title
                     </label>
@@ -481,17 +740,17 @@ const Profile = () => {
                       type="text"
                       value={formData.job_title}
                       onChange={(e) => handleInputChange('job_title', e.target.value)}
-                      className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                         isDark 
-                          ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                          : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                          ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                          : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                       }`}
                       placeholder="e.g., Senior Software Engineer"
                     />
                   </div>
                   <div>
-                    <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <label className={`block text-sm font-semibold mb-2 ${
+                      isDark ? 'text-slate-300' : 'text-slate-700'
                     }`}>
                       Company
                     </label>
@@ -499,17 +758,17 @@ const Profile = () => {
                       type="text"
                       value={formData.company}
                       onChange={(e) => handleInputChange('company', e.target.value)}
-                      className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                         isDark 
-                          ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                          : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                          ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                          : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                       }`}
                       placeholder="e.g., Acme Inc."
                     />
                   </div>
                   <div>
-                    <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <label className={`block text-sm font-semibold mb-2 ${
+                      isDark ? 'text-slate-300' : 'text-slate-700'
                     }`}>
                       Location
                     </label>
@@ -517,17 +776,17 @@ const Profile = () => {
                       type="text"
                       value={formData.location}
                       onChange={(e) => handleInputChange('location', e.target.value)}
-                      className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                         isDark 
-                          ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                          : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                          ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                          : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                       }`}
                       placeholder="e.g., San Francisco, CA"
                     />
                   </div>
                   <div>
-                    <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <label className={`block text-sm font-semibold mb-2 ${
+                      isDark ? 'text-slate-300' : 'text-slate-700'
                     }`}>
                       Industry
                     </label>
@@ -535,36 +794,36 @@ const Profile = () => {
                       type="text"
                       value={formData.industry}
                       onChange={(e) => handleInputChange('industry', e.target.value)}
-                      className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                         isDark 
-                          ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                          : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                          ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                          : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                       }`}
                       placeholder="e.g., Technology"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+                  <label className={`block text-sm font-semibold mb-2 ${
+                    isDark ? 'text-slate-300' : 'text-slate-700'
                   }`}>
                     Expertise
                   </label>
-                  <input
-                    type="text"
-                    value={formData.expertise}
-                    onChange={(e) => handleInputChange('expertise', e.target.value)}
-                    className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                      isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                    }`}
-                    placeholder="e.g., SaaS, B2B Sales, Product Strategy"
-                  />
+                    <input
+                      type="text"
+                      value={formData.expertise}
+                      onChange={(e) => handleInputChange('expertise', e.target.value)}
+                      className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
+                        isDark 
+                          ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                          : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
+                      }`}
+                      placeholder="e.g., SaaS, B2B Sales, Product Strategy"
+                    />
                 </div>
                 <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+                  <label className={`block text-sm font-semibold mb-2 ${
+                    isDark ? 'text-slate-300' : 'text-slate-700'
                   }`}>
                     Bio
                   </label>
@@ -572,17 +831,17 @@ const Profile = () => {
                     value={formData.bio}
                     onChange={(e) => handleInputChange('bio', e.target.value)}
                     rows={3}
-                    className={`w-full px-3 py-2 text-sm border resize-none focus:outline-none focus:border-blue-600 ${
+                    className={`w-full px-4 py-2.5 text-sm rounded-lg border resize-none transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                       isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                        ? 'bg-slate-800/50 border-slate-700 text-white placeholder-slate-500 focus:border-slate-500' 
+                        : 'bg-white border-slate-300 text-slate-900 placeholder-slate-400 focus:border-slate-500'
                     }`}
                     placeholder="Tell your story..."
                   />
                 </div>
                 <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+                  <label className={`block text-sm font-semibold mb-3 ${
+                    isDark ? 'text-slate-300' : 'text-slate-700'
                   }`}>
                     Looking For
                   </label>
@@ -600,12 +859,12 @@ const Profile = () => {
                               : [...current, option];
                             handleInputChange('looking_for', updated);
                           }}
-                          className={`px-2 py-1 text-xs border transition-all ${
+                          className={`px-3 py-1.5 text-xs font-medium border rounded-full transition-all ${
                             isSelected
-                              ? 'bg-blue-600 text-white border-blue-600'
+                              ? 'bg-slate-700 text-white border-slate-600 shadow-md'
                               : isDark
-                              ? 'border-slate-700 text-slate-400 hover:bg-slate-800'
-                              : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                              ? 'border-slate-700 text-slate-400 hover:bg-slate-800 hover:border-slate-600'
+                              : 'border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
                           }`}
                         >
                           {option}
@@ -616,299 +875,167 @@ const Profile = () => {
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+              <div className="space-y-6">
+                {/* Job Title & Company */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={`p-5 rounded-xl ${
+                    isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
                   }`}>
-                    Job Title
+                    <div className={`text-xs font-semibold uppercase tracking-wider mb-2 ${
+                      isDark ? 'text-slate-400' : 'text-slate-500'
+                    }`}>
+                      Job Title
+                    </div>
+                    <div className={`text-lg font-semibold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+                      {userData.job_title || (
+                        <span className={`text-sm font-normal italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                          Not specified
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    {userData.job_title || (
-                      <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                    )}
+                  <div className={`p-5 rounded-xl ${
+                    isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
+                  }`}>
+                    <div className={`text-xs font-semibold uppercase tracking-wider mb-2 ${
+                      isDark ? 'text-slate-400' : 'text-slate-500'
+                    }`}>
+                      Company
+                    </div>
+                    <div className={`text-lg font-semibold ${isDark ? 'text-slate-100' : 'text-slate-900'}`}>
+                      {userData.company || (
+                        <span className={`text-sm font-normal italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                          Not specified
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+
+                {/* Location & Industry */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={`p-5 rounded-xl ${
+                    isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
                   }`}>
-                    Company
-                  </div>
-                  <div className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    {userData.company || (
-                      <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                    )}
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                    <div className={`text-xs font-semibold uppercase tracking-wider mb-2 ${
+                      isDark ? 'text-slate-400' : 'text-slate-500'
                     }`}>
                       Location
                     </div>
-                    <div className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    <div className={`text-base font-medium ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                       {userData.location || (
-                        <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
+                        <span className={`text-sm font-normal italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                          Not specified
+                        </span>
                       )}
                     </div>
                   </div>
-                  <div>
-                    <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                      isDark ? 'text-slate-500' : 'text-slate-500'
+                  <div className={`p-5 rounded-xl ${
+                    isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
+                  }`}>
+                    <div className={`text-xs font-semibold uppercase tracking-wider mb-2 ${
+                      isDark ? 'text-slate-400' : 'text-slate-500'
                     }`}>
                       Industry
                     </div>
-                    <div className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                    <div className={`text-base font-medium ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
                       {userData.industry || (
-                        <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
+                        <span className={`text-sm font-normal italic ${isDark ? 'text-slate-500' : 'text-slate-400'}`}>
+                          Not specified
+                        </span>
                       )}
                     </div>
                   </div>
                 </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+
+                {/* Expertise */}
+                {userData.expertise && (
+                  <div className={`p-5 rounded-xl ${
+                    isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
                   }`}>
-                    Expertise
+                    <div className={`text-xs font-semibold uppercase tracking-wider mb-3 ${
+                      isDark ? 'text-slate-400' : 'text-slate-500'
+                    }`}>
+                      Expertise
+                    </div>
+                    <div className={`text-base leading-relaxed ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                      {userData.expertise}
+                    </div>
                   </div>
-                  <div className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    {userData.expertise || (
-                      <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
+                )}
+
+                {/* Bio */}
+                {userData.bio && (
+                  <div className={`p-5 rounded-xl ${
+                    isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
                   }`}>
-                    Bio
+                    <div className={`text-xs font-semibold uppercase tracking-wider mb-3 ${
+                      isDark ? 'text-slate-400' : 'text-slate-500'
+                    }`}>
+                      Bio
+                    </div>
+                    <div className={`text-base leading-relaxed ${isDark ? 'text-slate-200' : 'text-slate-800'}`}>
+                      {userData.bio}
+                    </div>
                   </div>
-                  <div className={`text-sm leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
-                    {userData.bio || (
-                      <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Looking For
-                  </div>
-                  {(() => {
-                    let lookingFor = [];
-                    try {
-                      lookingFor = typeof userData.looking_for === 'string' ? JSON.parse(userData.looking_for) : userData.looking_for;
-                    } catch (e) {
-                      lookingFor = [];
-                    }
-                    return lookingFor && lookingFor.length > 0 ? (
+                )}
+                {/* Looking For */}
+                {(() => {
+                  let lookingFor = [];
+                  try {
+                    lookingFor = typeof userData.looking_for === 'string' ? JSON.parse(userData.looking_for) : userData.looking_for;
+                  } catch (e) {
+                    lookingFor = [];
+                  }
+                  return lookingFor && lookingFor.length > 0 ? (
+                    <div className={`p-5 rounded-xl ${
+                      isDark ? 'bg-slate-800/30 border border-slate-700/30' : 'bg-slate-50/50 border border-slate-200/50'
+                    }`}>
+                      <div className={`text-xs font-semibold uppercase tracking-wider mb-3 ${
+                        isDark ? 'text-slate-400' : 'text-slate-500'
+                      }`}>
+                        Looking For
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         {lookingFor.map((item, idx) => (
                           <span
                             key={idx}
-                            className={`px-2 py-1 text-xs border ${
+                            className={`px-3 py-1.5 text-xs font-medium border rounded-full ${
                               isDark 
-                                ? 'bg-slate-800 text-slate-300 border-slate-700' 
-                                : 'bg-slate-50 text-slate-700 border-slate-200'
+                                ? 'bg-slate-800/30 text-slate-300 border-slate-600' 
+                                : 'bg-slate-100 text-slate-700 border-slate-300'
                             }`}
                           >
                             {item}
                           </span>
                         ))}
                       </div>
-                    ) : (
-                      <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Links & Contact */}
-          <div className={`pb-8 border-b ${isDark ? 'border-slate-800' : 'border-slate-200'}`}>
-            <h2 className={`text-xl font-light tracking-tight mb-6 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-              Links & Contact
-            </h2>
-            
-            {isOwnProfile && isEditing ? (
-              <div className="space-y-4">
-                <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    LinkedIn
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.linkedin_url}
-                    onChange={(e) => handleInputChange('linkedin_url', e.target.value)}
-                    className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                      isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                    }`}
-                    placeholder="https://linkedin.com/in/yourprofile"
-                  />
-                </div>
-                <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Twitter/X
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.twitter_url}
-                    onChange={(e) => handleInputChange('twitter_url', e.target.value)}
-                    className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                      isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                    }`}
-                    placeholder="https://twitter.com/yourhandle"
-                  />
-                </div>
-                <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Website
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.website_url}
-                    onChange={(e) => handleInputChange('website_url', e.target.value)}
-                    className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                      isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                    }`}
-                    placeholder="https://yourwebsite.com"
-                  />
-                </div>
-                <div>
-                  <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Calendly
-                  </label>
-                  <input
-                    type="url"
-                    value={formData.calendly_url}
-                    onChange={(e) => handleInputChange('calendly_url', e.target.value)}
-                    className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
-                      isDark 
-                        ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-600' 
-                        : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                    }`}
-                    placeholder="https://calendly.com/yourname"
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    LinkedIn
-                  </div>
-                  {userData.linkedin_profile_url ? (
-                    <a
-                      href={userData.linkedin_profile_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`text-sm hover:underline ${
-                        isDark ? 'text-slate-300 hover:text-white' : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      {userData.linkedin_profile_url}
-                    </a>
-                  ) : (
-                    <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                  )}
-                </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Twitter/X
-                  </div>
-                  {userData.twitter_url ? (
-                    <a
-                      href={userData.twitter_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`text-sm hover:underline ${
-                        isDark ? 'text-slate-300 hover:text-white' : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      {userData.twitter_url}
-                    </a>
-                  ) : (
-                    <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                  )}
-                </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Website
-                  </div>
-                  {userData.website_url ? (
-                    <a
-                      href={userData.website_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`text-sm hover:underline ${
-                        isDark ? 'text-slate-300 hover:text-white' : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      {userData.website_url}
-                    </a>
-                  ) : (
-                    <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                  )}
-                </div>
-                <div>
-                  <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                    isDark ? 'text-slate-500' : 'text-slate-500'
-                  }`}>
-                    Calendly
-                  </div>
-                  {userData.calendly_url ? (
-                    <a
-                      href={userData.calendly_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={`text-sm hover:underline ${
-                        isDark ? 'text-slate-300 hover:text-white' : 'text-slate-700 hover:text-slate-900'
-                      }`}
-                    >
-                      {userData.calendly_url}
-                    </a>
-                  ) : (
-                    <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>Not set</span>
-                  )}
-                </div>
+                    </div>
+                  ) : null;
+                })()}
               </div>
             )}
           </div>
 
           {/* Pricing */}
-          <div className="pb-8">
-            <h2 className={`text-xl font-light tracking-tight mb-6 ${isDark ? 'text-white' : 'text-slate-900'}`}>
-              Pricing
-            </h2>
+          <div className={`rounded-2xl p-8 transition-all ${
+            isDark 
+              ? 'bg-slate-800/40 border border-slate-700/50 hover:border-slate-600/50 shadow-xl' 
+              : 'bg-white border border-slate-200 shadow-lg hover:shadow-xl'
+          }`}>
+            <div className="mb-8">
+              <h2 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                Pricing
+              </h2>
+              <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                Set your maximum rate per email
+              </p>
+            </div>
             
             {isOwnProfile && isEditing ? (
               <div>
-                <label className={`block text-xs font-medium tracking-wider uppercase mb-2 ${
-                  isDark ? 'text-slate-500' : 'text-slate-500'
+                <label className={`block text-sm font-semibold mb-2 ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
                 }`}>
                   Max Rate per Email ($)
                 </label>
@@ -919,10 +1046,10 @@ const Profile = () => {
                   max={userData.linkedin_verified ? 5.0 : 2.0}
                   value={formData.price_limit}
                   onChange={(e) => handleInputChange('price_limit', parseFloat(e.target.value) || 0)}
-                  className={`w-full px-3 py-2 text-sm border focus:outline-none focus:border-blue-600 ${
+                  className={`w-full px-4 py-2.5 text-sm rounded-lg border transition-all focus:outline-none focus:ring-2 focus:ring-slate-500/50 ${
                     isDark 
-                      ? 'bg-slate-800 border-slate-700 text-white' 
-                      : 'bg-white border-slate-200 text-slate-900'
+                      ? 'bg-slate-800/50 border-slate-700 text-white focus:border-slate-500' 
+                      : 'bg-white border-slate-300 text-slate-900 focus:border-slate-500'
                   }`}
                 />
                 <p className={`text-xs mt-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
@@ -932,20 +1059,38 @@ const Profile = () => {
                 </p>
               </div>
             ) : (
-              <div>
-                <div className={`text-xs font-medium tracking-wider uppercase mb-2 ${
-                  isDark ? 'text-slate-500' : 'text-slate-500'
+              <div className={`p-6 rounded-xl ${
+                isDark ? 'bg-slate-800/30 border border-slate-700' : 'bg-slate-100 border border-slate-300'
+              }`}>
+                <div className={`text-xs font-semibold uppercase tracking-wider mb-3 ${
+                  isDark ? 'text-slate-400' : 'text-slate-600'
                 }`}>
                   Max Rate per Email
                 </div>
-                <div className={`text-sm ${isDark ? 'text-slate-300' : 'text-slate-700'}`}>
+                <div className={`text-4xl font-bold mb-3 ${
+                  isDark ? 'text-slate-200' : 'text-slate-900'
+                }`}>
                   ${userData.price_limit?.toFixed(2) || '0.00'}
                 </div>
-                <p className={`text-xs mt-2 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                <div className={`text-sm font-medium ${
+                  isDark ? 'text-slate-300' : 'text-slate-700'
+                }`}>
                   {userData.linkedin_verified 
-                    ? 'LinkedIn verified: Up to $5.00 per email'
-                    : 'Unverified: Up to $2.00 per email'}
-                </p>
+                    ? (
+                      <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${
+                        isDark ? 'bg-slate-700/50 text-slate-300' : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        ✓ LinkedIn verified: Up to $5.00 per email
+                      </span>
+                    )
+                    : (
+                      <span className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full ${
+                        isDark ? 'bg-slate-700/50 text-slate-400' : 'bg-slate-200 text-slate-600'
+                      }`}>
+                        Unverified: Up to $2.00 per email
+                      </span>
+                    )}
+                </div>
               </div>
             )}
           </div>

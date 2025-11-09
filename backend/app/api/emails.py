@@ -4,6 +4,10 @@ from typing import List, Optional
 from datetime import datetime
 from decimal import Decimal
 import uuid
+import logging
+import re
+import time
+import google.generativeai as genai
 
 from ..db.session import get_db
 from ..db.models import Email, User, EmailStatus
@@ -17,6 +21,7 @@ from ..utils.payment_processor import (
     get_user_available_balance,
     validate_payment_amount
 )
+from ..utils.prompt_templates import EmailSummaryPromptTemplate
 from .schemas import (
     EmailCreate,
     EmailUpdate,
@@ -28,7 +33,8 @@ from .schemas import (
     BulkArchiveRequest,
     BulkDeleteRequest,
     BulkStarRequest,
-    ForwardEmailRequest
+    ForwardEmailRequest,
+    SmartSummaryResponse
 )
 
 router = APIRouter(prefix="/emails", tags=["emails"])
@@ -1182,5 +1188,229 @@ async def forward_email_thread(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to forward email: {str(e)}"
+        )
+
+
+@router.get("/{email_id}/smart-summary", response_model=SmartSummaryResponse)
+async def get_smart_summary(
+    email_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate an AI-powered summary of an email thread using Gemini AI.
+    Returns a crisp, concise summary of the entire conversation.
+    """
+    # Get the email
+    email = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(Email.id == email_id).first()
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email not found"
+        )
+    
+    # Check if user has access to this email
+    if email.received_by != current_user.id and email.sent_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this email"
+        )
+    
+    # Get thread root ID
+    thread_root_id = email.thread_root_id or email.id
+    
+    # Get all emails in the thread
+    thread_emails = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).order_by(Email.created_at.asc()).all()
+    
+    if not thread_emails:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Thread not found"
+        )
+    
+    # Check Gemini API key
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Gemini API key not configured"
+        )
+    
+    try:
+        # Log thread information
+        logger = logging.getLogger(__name__)
+        logger.info(f"Generating smart summary for thread root: {thread_root_id}, found {len(thread_emails)} emails in thread")
+        
+        # Configure Gemini
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        
+        # First, try to list available models to see what's actually available
+        model = None
+        try:
+            logger.info("Listing available Gemini models...")
+            available_models = genai.list_models()
+            # Filter models that support generateContent
+            supported_models = [
+                m for m in available_models 
+                if 'generateContent' in m.supported_generation_methods
+            ]
+            
+            if supported_models:
+                # Extract model names (remove 'models/' prefix if present)
+                model_names = []
+                for m in supported_models:
+                    model_name = m.name
+                    # Remove 'models/' prefix if present
+                    if model_name.startswith('models/'):
+                        model_name = model_name.replace('models/', '')
+                    model_names.append(model_name)
+                
+                logger.info(f"Found {len(model_names)} available models: {model_names}")
+                
+                # Try models in order of preference
+                preferred_order = [
+                    'gemini-2.5-flash',  # Preferred model
+                    'gemini-1.0-pro',
+                    'gemini-pro',
+                    'gemini-1.5-flash',
+                    'gemini-1.5-pro'
+                ]
+                
+                # Try preferred models first
+                for preferred in preferred_order:
+                    if preferred in model_names:
+                        try:
+                            logger.info(f"Trying preferred model: {preferred}")
+                            model = genai.GenerativeModel(preferred)
+                            logger.info(f"Successfully initialized model: {preferred}")
+                            break
+                        except Exception as e:
+                            logger.warning(f"Failed to use {preferred}: {str(e)}")
+                            continue
+                
+                # If no preferred model worked, use the first available
+                if model is None and model_names:
+                    first_model = model_names[0]
+                    logger.info(f"Using first available model: {first_model}")
+                    model = genai.GenerativeModel(first_model)
+            else:
+                logger.warning("No models with generateContent support found")
+        except Exception as e:
+            logger.warning(f"Failed to list models, trying fallback models: {str(e)}")
+            # Fallback: try common model names
+            fallback_models = ['gemini-2.5-flash', 'gemini-1.0-pro', 'gemini-pro']
+            for model_name in fallback_models:
+                try:
+                    logger.info(f"Trying fallback model: {model_name}")
+                    model = genai.GenerativeModel(model_name)
+                    logger.info(f"Successfully initialized fallback model: {model_name}")
+                    break
+                except Exception as e2:
+                    logger.warning(f"Fallback model {model_name} failed: {str(e2)}")
+                    continue
+        
+        if model is None:
+            error_msg = "Failed to initialize any Gemini model. Please check your API key and model availability."
+            logger.error(error_msg)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
+        
+        # Build email thread data for prompt template
+        thread_email_data = []
+        for thread_email in thread_emails:
+            sender_name = thread_email.sender.first_name + " " + thread_email.sender.last_name if thread_email.sender else "Unknown"
+            receiver_name = thread_email.receiver.first_name + " " + thread_email.receiver.last_name if thread_email.receiver else "Unknown"
+            
+            # Clean up body text (remove HTML tags if present, limit length)
+            body_text = thread_email.body or '(No content)'
+            if thread_email.html_body:
+                # If HTML body exists, prefer it but we'll use plain text body for now
+                pass
+            
+            thread_email_data.append({
+                'sender_name': sender_name,
+                'sender_email': thread_email.sender.email if thread_email.sender else 'Unknown',
+                'receiver_name': receiver_name,
+                'receiver_email': thread_email.receiver.email if thread_email.receiver else 'Unknown',
+                'date': thread_email.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'subject': thread_email.subject or '(No subject)',
+                'body': body_text
+            })
+        
+        # Use prompt template to build the prompt
+        prompt = EmailSummaryPromptTemplate.build_thread_summary_prompt(thread_email_data)
+        
+        # Generate summary with retry logic for rate limits
+        logger.info(f"Sending request to Gemini AI for thread summary...")
+        
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt)
+                summary = response.text.strip()
+                
+                logger.info(f"Successfully generated summary (length: {len(summary)} characters)")
+                
+                return SmartSummaryResponse(
+                    summary=summary,
+                    thread_id=thread_root_id
+                )
+            except Exception as e:
+                error_str = str(e)
+                
+                # Check if it's a quota/rate limit error (429)
+                if '429' in error_str or 'quota' in error_str.lower() or 'rate limit' in error_str.lower():
+                    if attempt < max_retries - 1:
+                        # Extract retry delay from error if available
+                        retry_match = re.search(r'retry.*?(\d+)\s*seconds?', error_str, re.IGNORECASE)
+                        if retry_match:
+                            retry_delay = int(retry_match.group(1)) + 1
+                        else:
+                            retry_delay = retry_delay * 2  # Exponential backoff
+                        
+                        logger.warning(f"Rate limit/quota exceeded (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay} seconds...")
+                        time.sleep(retry_delay)
+                        continue
+                    else:
+                        # Last attempt failed
+                        logger.error(f"Rate limit/quota exceeded after {max_retries} attempts")
+                        raise HTTPException(
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                            detail="API quota exceeded. Please try again later or check your billing plan. For more information, visit: https://ai.google.dev/gemini-api/docs/rate-limits"
+                        )
+                else:
+                    # Not a rate limit error, re-raise
+                    raise
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 429)
+        raise
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error generating smart summary: {str(e)}", exc_info=True)
+        
+        # Check if it's a quota error
+        error_str = str(e)
+        if '429' in error_str or 'quota' in error_str.lower():
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="API quota exceeded. Please try again later or check your billing plan. For more information, visit: https://ai.google.dev/gemini-api/docs/rate-limits"
+            )
+        
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate summary: {str(e)}"
         )
 
