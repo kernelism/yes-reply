@@ -249,11 +249,10 @@ const Profile = () => {
         }
       }
 
-      // Convert looking_for array to JSON string if it exists
+      // Prepare update data (excluding profile_picture_url as it's uploaded separately)
       const updateData = {
         ...formData,
-        looking_for: formData.looking_for && formData.looking_for.length > 0 ? formData.looking_for : null,
-        profile_picture_url: profilePictureUrl
+        looking_for: formData.looking_for && formData.looking_for.length > 0 ? formData.looking_for : null
       };
       
       const response = await fetch(
