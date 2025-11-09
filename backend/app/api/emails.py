@@ -34,7 +34,8 @@ from .schemas import (
     BulkDeleteRequest,
     BulkStarRequest,
     ForwardEmailRequest,
-    SmartSummaryResponse
+    SmartSummaryResponse,
+    AIAskRequest
 )
 
 router = APIRouter(prefix="/emails", tags=["emails"])
@@ -1412,5 +1413,740 @@ async def get_smart_summary(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate summary: {str(e)}"
+        )
+
+
+def get_gemini_model(logger):
+    """Helper function to initialize and return a Gemini model."""
+    genai.configure(api_key=settings.GEMINI_API_KEY)
+    
+    model = None
+    try:
+        logger.info("Listing available Gemini models...")
+        available_models = genai.list_models()
+        supported_models = [
+            m for m in available_models 
+            if 'generateContent' in m.supported_generation_methods
+        ]
+        
+        if supported_models:
+            model_names = []
+            for m in supported_models:
+                model_name = m.name
+                if model_name.startswith('models/'):
+                    model_name = model_name.replace('models/', '')
+                model_names.append(model_name)
+            
+            logger.info(f"Found {len(model_names)} available models: {model_names}")
+            
+            preferred_order = [
+                'gemini-2.5-flash',
+                'gemini-1.0-pro',
+                'gemini-pro',
+                'gemini-1.5-flash',
+                'gemini-1.5-pro'
+            ]
+            
+            for preferred in preferred_order:
+                if preferred in model_names:
+                    try:
+                        logger.info(f"Trying preferred model: {preferred}")
+                        model = genai.GenerativeModel(preferred)
+                        logger.info(f"Successfully initialized model: {preferred}")
+                        return model
+                    except Exception as e:
+                        logger.warning(f"Failed to use {preferred}: {str(e)}")
+                        continue
+            
+            if model is None and model_names:
+                first_model = model_names[0]
+                logger.info(f"Using first available model: {first_model}")
+                model = genai.GenerativeModel(first_model)
+                return model
+    except Exception as e:
+        logger.warning(f"Failed to list models, trying fallback models: {str(e)}")
+        fallback_models = ['gemini-2.5-flash', 'gemini-1.0-pro', 'gemini-pro']
+        for model_name in fallback_models:
+            try:
+                logger.info(f"Trying fallback model: {model_name}")
+                model = genai.GenerativeModel(model_name)
+                logger.info(f"Successfully initialized fallback model: {model_name}")
+                return model
+            except Exception as e2:
+                logger.warning(f"Fallback model {model_name} failed: {str(e2)}")
+                continue
+    
+    return None
+
+
+def generate_ai_content(model, prompt, logger, max_retries=3):
+    """Helper function to generate content with retry logic."""
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            response = model.generate_content(prompt)
+            return response.text.strip()
+        except Exception as e:
+            error_str = str(e)
+            
+            if '429' in error_str or 'quota' in error_str.lower() or 'rate limit' in error_str.lower():
+                if attempt < max_retries - 1:
+                    retry_match = re.search(r'retry.*?(\d+)\s*seconds?', error_str, re.IGNORECASE)
+                    if retry_match:
+                        retry_delay = int(retry_match.group(1)) + 1
+                    else:
+                        retry_delay = retry_delay * 2
+                    
+                    logger.warning(f"Rate limit/quota exceeded (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Rate limit/quota exceeded after {max_retries} attempts")
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail="API quota exceeded. Please try again later."
+                    )
+            else:
+                raise
+    
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Failed to generate AI response"
+    )
+
+
+def create_ai_email_in_thread(db: Session, thread_root_id: str, current_user: User, subject: str, body: str, attachments: Optional[str] = None):
+    """Helper function to create an AI-generated email in a thread."""
+    # Generate unique IDs
+    new_email_id = str(uuid.uuid4())
+    new_message_id = f"<{new_email_id}@yesreply.tech>"
+    
+    # Get thread info
+    thread_root = db.query(Email).filter(Email.id == thread_root_id).first()
+    if not thread_root:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Thread root not found"
+        )
+    
+    # Count existing emails in thread
+    thread_count = db.query(Email).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).count()
+    
+    # Determine sender and receiver (AI responds as the current user to themselves)
+    sent_by = current_user.id
+    received_by = current_user.id
+    
+    # Get the last email's message_id for threading
+    last_email = db.query(Email).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).order_by(Email.created_at.desc()).first()
+    
+    in_reply_to = last_email.message_id if last_email else None
+    references = last_email.references if last_email else ""
+    if in_reply_to:
+        references = f"{references} {in_reply_to}".strip()
+    
+    # Create new email
+    ai_email = Email(
+        id=new_email_id,
+        sent_by=sent_by,
+        received_by=received_by,
+        subject=subject,
+        body=body,
+        attachments=attachments,
+        original_email_id=thread_root_id,
+        thread_number=thread_count,
+        thread_root_id=thread_root_id,
+        message_id=new_message_id,
+        in_reply_to=in_reply_to,
+        references=references,
+        status=EmailStatus.SENT,
+        is_read=False,
+        sent_at=datetime.utcnow(),
+        delivered_at=datetime.utcnow()
+    )
+    
+    db.add(ai_email)
+    db.commit()
+    db.refresh(ai_email)
+    
+    return ai_email
+
+
+@router.post("/{email_id}/ai-summary", response_model=EmailResponse)
+async def create_ai_summary(
+    email_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Generate an AI-powered summary of an email thread and add it as an email in the thread.
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Get the email
+    email = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(Email.id == email_id).first()
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email not found"
+        )
+    
+    # Check if user has access
+    if email.received_by != current_user.id and email.sent_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this email"
+        )
+    
+    # Check Gemini API key
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Gemini API key not configured"
+        )
+    
+    # Get thread root ID
+    thread_root_id = email.thread_root_id or email.id
+    
+    # Get all emails in the thread
+    thread_emails = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).order_by(Email.created_at.asc()).all()
+    
+    try:
+        # Get Gemini model
+        model = get_gemini_model(logger)
+        if model is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize Gemini model"
+            )
+        
+        # Build email thread data
+        thread_email_data = []
+        for thread_email in thread_emails:
+            sender_name = f"{thread_email.sender.first_name} {thread_email.sender.last_name}" if thread_email.sender else "Unknown"
+            receiver_name = f"{thread_email.receiver.first_name} {thread_email.receiver.last_name}" if thread_email.receiver else "Unknown"
+            
+            thread_email_data.append({
+                'sender_name': sender_name,
+                'sender_email': thread_email.sender.email if thread_email.sender else 'Unknown',
+                'receiver_name': receiver_name,
+                'receiver_email': thread_email.receiver.email if thread_email.receiver else 'Unknown',
+                'date': thread_email.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                'subject': thread_email.subject or '(No subject)',
+                'body': thread_email.body or '(No content)'
+            })
+        
+        # Use prompt template
+        prompt = EmailSummaryPromptTemplate.build_thread_summary_prompt(thread_email_data)
+        
+        # Generate summary
+        logger.info(f"Generating AI summary for thread: {thread_root_id}")
+        summary = generate_ai_content(model, prompt, logger)
+        
+        # Create email with summary
+        subject = f"🤖 AI Summary: {email.subject or 'Thread Summary'}"
+        body = f"AI-Generated Summary\n\n{summary}\n\n---\nThis summary was automatically generated by AI based on the email thread."
+        
+        ai_email = create_ai_email_in_thread(db, thread_root_id, current_user, subject, body)
+        
+        logger.info(f"Successfully created AI summary email: {ai_email.id}")
+        return email_to_response(ai_email)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating AI summary: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate AI summary: {str(e)}"
+        )
+
+
+@router.post("/{email_id}/ai-ask", response_model=EmailResponse)
+async def create_ai_ask(
+    email_id: str,
+    request: AIAskRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Ask AI a question about an email thread and add the answer as an email in the thread.
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Get the email
+    email = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(Email.id == email_id).first()
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email not found"
+        )
+    
+    # Check if user has access
+    if email.received_by != current_user.id and email.sent_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this email"
+        )
+    
+    # Check Gemini API key
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Gemini API key not configured"
+        )
+    
+    # Get thread root ID
+    thread_root_id = email.thread_root_id or email.id
+    
+    # Get all emails in the thread
+    thread_emails = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).order_by(Email.created_at.asc()).all()
+    
+    try:
+        # Get Gemini model
+        model = get_gemini_model(logger)
+        if model is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize Gemini model"
+            )
+        
+        # Build context from thread
+        thread_context = ""
+        for i, thread_email in enumerate(thread_emails, 1):
+            sender_name = f"{thread_email.sender.first_name} {thread_email.sender.last_name}" if thread_email.sender else "Unknown"
+            thread_context += f"\n\nEmail {i}:\n"
+            thread_context += f"From: {sender_name}\n"
+            thread_context += f"Subject: {thread_email.subject or '(No subject)'}\n"
+            thread_context += f"Date: {thread_email.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            thread_context += f"Content:\n{thread_email.body or '(No content)'}\n"
+        
+        # Build prompt
+        prompt = f"""You are an AI assistant analyzing an email thread. Based on the context provided, answer the user's question accurately and provide your response in MARKDOWN format for better readability.
+
+Email Thread Context:
+{thread_context}
+
+User's Question: {request.question}
+
+Provide a clear, helpful answer based solely on the information in the email thread. Use markdown formatting:
+- Use **bold** for important points
+- Use bullet points (-) for lists
+- Use headers (##) to organize your response if needed
+- Include relevant quotes from the thread if helpful
+
+If the answer isn't available in the thread, clearly state that."""
+        
+        # Generate answer
+        logger.info(f"Generating AI answer for thread: {thread_root_id}, question: {request.question}")
+        answer = generate_ai_content(model, prompt, logger)
+        
+        # Create email with answer
+        subject = f"🤖 AI Answer: {request.question[:50]}..."
+        body = f"Question: {request.question}\n\nAI Answer:\n{answer}\n\n---\nThis answer was automatically generated by AI based on the email thread context."
+        
+        ai_email = create_ai_email_in_thread(db, thread_root_id, current_user, subject, body)
+        
+        logger.info(f"Successfully created AI answer email: {ai_email.id}")
+        return email_to_response(ai_email)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating AI answer: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate AI answer: {str(e)}"
+        )
+
+
+@router.post("/{email_id}/ai-schedule", response_model=EmailResponse)
+async def create_ai_schedule(
+    email_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Analyze conversation and create a meeting schedule with .ics file attachment.
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Get the email
+    email = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(Email.id == email_id).first()
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email not found"
+        )
+    
+    # Check if user has access
+    if email.received_by != current_user.id and email.sent_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this email"
+        )
+    
+    # Check Gemini API key
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Gemini API key not configured"
+        )
+    
+    # Get thread root ID
+    thread_root_id = email.thread_root_id or email.id
+    
+    # Get all emails in the thread
+    thread_emails = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).order_by(Email.created_at.asc()).all()
+    
+    try:
+        # Get Gemini model
+        model = get_gemini_model(logger)
+        if model is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to initialize Gemini model"
+            )
+        
+        # Build context from thread
+        thread_context = ""
+        for i, thread_email in enumerate(thread_emails, 1):
+            sender_name = f"{thread_email.sender.first_name} {thread_email.sender.last_name}" if thread_email.sender else "Unknown"
+            thread_context += f"\n\nEmail {i}:\n"
+            thread_context += f"From: {sender_name}\n"
+            thread_context += f"Subject: {thread_email.subject or '(No subject)'}\n"
+            thread_context += f"Date: {thread_email.created_at.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            thread_context += f"Content:\n{thread_email.body or '(No content)'}\n"
+        
+        # Build prompt for scheduling
+        prompt = f"""You are a scheduling assistant. Analyze this email thread and determine if there is ANY indication of wanting to schedule a meeting or conversation.
+
+Look for:
+- Direct meeting requests or proposals
+- Expressions of interest in connecting, talking, or meeting
+- Questions like "interested in learning more?", "want to schedule a call?", "let's connect"
+- Invitations to discuss something further
+
+If you find ANY scheduling intent (even vague), create a proposed meeting and set "has_scheduling" to true.
+If the thread shows interest but lacks specific details, generate reasonable defaults:
+- Use a date 3-5 business days from now
+- Default to 10:00 AM time
+- Duration: 30 minutes for initial calls, 60 for detailed discussions
+- Location: "Virtual Meeting" if not specified
+- Create a relevant meeting title and description based on the thread content
+
+Provide your response in this exact JSON format:
+
+{{
+  "has_scheduling": true/false,
+  "meeting_title": "Title of the meeting",
+  "date": "YYYY-MM-DD",
+  "time": "HH:MM" (24-hour format),
+  "duration_minutes": 30,
+  "location": "Location or virtual meeting link",
+  "description": "Meeting description/agenda"
+}}
+
+Email Thread Context:
+{thread_context}
+
+IMPORTANT: Be proactive - if people are expressing interest in connecting or discussing something, help them schedule it even if specific times aren't mentioned yet."""
+        
+        # Generate scheduling info
+        logger.info(f"Generating AI schedule for thread: {thread_root_id}")
+        schedule_response = generate_ai_content(model, prompt, logger)
+        
+        # Try to parse JSON response
+        import json
+        import base64
+        from datetime import datetime as dt, timedelta
+        
+        try:
+            # Extract JSON from response (might have markdown formatting)
+            json_match = re.search(r'\{[^}]*"has_scheduling"[^}]*\}', schedule_response, re.DOTALL)
+            if json_match:
+                schedule_data = json.loads(json_match.group(0))
+            else:
+                schedule_data = json.loads(schedule_response)
+            
+            if schedule_data.get('has_scheduling'):
+                # Generate .ics file
+                meeting_title = schedule_data.get('meeting_title', 'Meeting')
+                date_str = schedule_data.get('date', '')
+                time_str = schedule_data.get('time', '10:00')
+                duration = schedule_data.get('duration_minutes', 30)
+                location = schedule_data.get('location', '')
+                description = schedule_data.get('description', '')
+                
+                # Parse date and time
+                try:
+                    meeting_dt = dt.strptime(f"{date_str} {time_str}", "%Y-%m-%d %H:%M")
+                except:
+                    # Default to tomorrow at 10 AM
+                    meeting_dt = dt.now() + timedelta(days=1)
+                    meeting_dt = meeting_dt.replace(hour=10, minute=0, second=0, microsecond=0)
+                
+                end_dt = meeting_dt + timedelta(minutes=duration)
+                
+                # Format for ICS
+                def format_ics_date(dt_obj):
+                    return dt_obj.strftime("%Y%m%dT%H%M%S")
+                
+                # Generate ICS content
+                ics_content = [
+                    'BEGIN:VCALENDAR',
+                    'VERSION:2.0',
+                    'PRODID:-//YesReply//AI Scheduler//EN',
+                    'CALSCALE:GREGORIAN',
+                    'METHOD:REQUEST',
+                    'BEGIN:VEVENT',
+                    f'UID:{str(uuid.uuid4())}@yesreply.tech',
+                    f'DTSTAMP:{format_ics_date(dt.now())}',
+                    f'DTSTART:{format_ics_date(meeting_dt)}',
+                    f'DTEND:{format_ics_date(end_dt)}',
+                    f'SUMMARY:{meeting_title}',
+                    f'ORGANIZER;CN={current_user.first_name} {current_user.last_name}:MAILTO:{current_user.email}',
+                    'STATUS:CONFIRMED',
+                    'SEQUENCE:0',
+                ]
+                
+                if description:
+                    # Escape newlines for ICS format
+                    escaped_description = description.replace('\n', '\\n')
+                    ics_content.append(f'DESCRIPTION:{escaped_description}')
+                
+                if location:
+                    ics_content.append(f'LOCATION:{location}')
+                
+                ics_content.extend([
+                    'BEGIN:VALARM',
+                    'TRIGGER:-PT15M',
+                    'ACTION:DISPLAY',
+                    f'DESCRIPTION:Reminder: {meeting_title}',
+                    'END:VALARM',
+                    'END:VEVENT',
+                    'END:VCALENDAR'
+                ])
+                
+                ics_text = '\r\n'.join(ics_content)
+                ics_base64 = base64.b64encode(ics_text.encode()).decode()
+                
+                # Create attachment JSON
+                attachment_data = json.dumps([{
+                    'filename': f'meeting_{meeting_dt.strftime("%Y%m%d_%H%M")}.ics',
+                    'content_type': 'text/calendar; charset=utf-8; method=REQUEST',
+                    'data': ics_base64,
+                    'size': len(ics_text)
+                }])
+                
+                # Create body
+                body = f"""🗓️ Meeting Scheduled
+
+{meeting_title}
+
+📅 Date: {meeting_dt.strftime('%A, %B %d, %Y')}
+🕐 Time: {meeting_dt.strftime('%I:%M %p')} - {end_dt.strftime('%I:%M %p')}
+⏱️ Duration: {duration} minutes
+"""
+                if location:
+                    body += f"📍 Location: {location}\n"
+                if description:
+                    body += f"\n📝 Details:\n{description}\n"
+                
+                body += "\n\n📎 Calendar Invite: Please see attached .ics file to add this meeting to your calendar.\n\n---\nThis meeting was automatically scheduled by AI based on the email thread."
+                
+                subject = f"🗓️ AI Scheduled: {meeting_title}"
+                
+                ai_email = create_ai_email_in_thread(db, thread_root_id, current_user, subject, body, attachment_data)
+                
+                logger.info(f"Successfully created AI schedule email with .ics attachment: {ai_email.id}")
+                return email_to_response(ai_email)
+            else:
+                # No scheduling info found
+                body = f"🤖 AI Scheduling Analysis\n\nNo clear scheduling information was found in this email thread.\n\n{schedule_response}\n\n---\nThis analysis was automatically generated by AI."
+                subject = "🤖 AI Scheduling: No scheduling info found"
+                
+                ai_email = create_ai_email_in_thread(db, thread_root_id, current_user, subject, body)
+                
+                logger.info(f"Created AI schedule email (no scheduling found): {ai_email.id}")
+                return email_to_response(ai_email)
+                
+        except (json.JSONDecodeError, KeyError) as e:
+            # Failed to parse, return as text
+            logger.warning(f"Failed to parse schedule JSON: {str(e)}")
+            body = f"🤖 AI Scheduling Analysis\n\n{schedule_response}\n\n---\nThis analysis was automatically generated by AI."
+            subject = "🤖 AI Scheduling Analysis"
+            
+            ai_email = create_ai_email_in_thread(db, thread_root_id, current_user, subject, body)
+            return email_to_response(ai_email)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating AI schedule: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate AI schedule: {str(e)}"
+        )
+
+
+@router.post("/{email_id}/ai-research", response_model=EmailResponse)
+async def create_ai_research(
+    email_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Fact-check content using AI with web search capabilities.
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Get the email
+    email = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(Email.id == email_id).first()
+    
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Email not found"
+        )
+    
+    # Check if user has access
+    if email.received_by != current_user.id and email.sent_by != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have access to this email"
+        )
+    
+    # Check Gemini API key
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Gemini API key not configured"
+        )
+    
+    # Get thread root ID
+    thread_root_id = email.thread_root_id or email.id
+    
+    # Get all emails in the thread
+    thread_emails = db.query(Email).options(
+        joinedload(Email.sender),
+        joinedload(Email.receiver)
+    ).filter(
+        (Email.thread_root_id == thread_root_id) | (Email.id == thread_root_id)
+    ).order_by(Email.created_at.asc()).all()
+    
+    try:
+        # Get Gemini model with grounding (search)
+        genai.configure(api_key=settings.GEMINI_API_KEY)
+        
+        # Try to use a model with Google Search grounding
+        try:
+            logger.info("Initializing Gemini model with Google Search grounding...")
+            # Use google_search tool (not google_search_retrieval)
+            from google.generativeai import protos
+            google_search_tool = protos.Tool(
+                google_search=protos.GoogleSearch()
+            )
+            model = genai.GenerativeModel(
+                'gemini-2.0-flash-exp',
+                tools=[google_search_tool]
+            )
+        except Exception as e:
+            # Fallback to regular model without search
+            logger.warning(f"Failed to use model with grounding: {str(e)}, using regular model")
+            model = get_gemini_model(logger)
+            if model is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to initialize Gemini model"
+                )
+        
+        # Build context from thread
+        thread_context = ""
+        for i, thread_email in enumerate(thread_emails, 1):
+            sender_name = f"{thread_email.sender.first_name} {thread_email.sender.last_name}" if thread_email.sender else "Unknown"
+            thread_context += f"\n\nEmail {i}:\n"
+            thread_context += f"From: {sender_name}\n"
+            thread_context += f"Subject: {thread_email.subject or '(No subject)'}\n"
+            thread_context += f"Content:\n{thread_email.body or '(No content)'}\n"
+        
+        # Build research prompt
+        prompt = f"""You are a fact-checking AI assistant with access to web search. Analyze the following email thread and provide a comprehensive research report in MARKDOWN format.
+
+Your report should include:
+
+## Key Claims Analysis
+- List each significant claim or fact mentioned in the thread
+- For each claim, provide:
+  - **Claim**: The statement being checked
+  - **Status**: ✅ Verified | ❌ False | ⚠️ Unclear
+  - **Evidence**: Brief explanation with sources
+  - **Source**: Link to reference (if available)
+
+## Detailed Findings
+Provide detailed analysis of important claims with supporting evidence.
+
+## Recommendations
+Any corrections, clarifications, or additional context needed.
+
+Email Thread Context:
+{thread_context}
+
+Format your response using markdown with headers (##), bold (**text**), bullet points (-), and links ([text](url)) where appropriate."""
+        
+        # Generate research
+        logger.info(f"Generating AI research for thread: {thread_root_id}")
+        research_result = generate_ai_content(model, prompt, logger)
+        
+        # Create email with research
+        subject = f"🔍 AI Research: Fact-Check Results"
+        body = f"🔍 AI-Powered Fact-Check & Research\n\n{research_result}\n\n---\nThis research was automatically generated by AI with web search capabilities."
+        
+        ai_email = create_ai_email_in_thread(db, thread_root_id, current_user, subject, body)
+        
+        logger.info(f"Successfully created AI research email: {ai_email.id}")
+        return email_to_response(ai_email)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating AI research: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate AI research: {str(e)}"
         )
 

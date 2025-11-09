@@ -3,6 +3,54 @@ import { Mail, Search, Send, Inbox, X, Sun, Moon, Settings, Plus, Paperclip, Smi
 import Payments from './Payments';
 import { useNavigate } from 'react-router-dom';
 
+// Simple Markdown Renderer for AI emails
+const MarkdownRenderer = ({ content, isDark }) => {
+  const renderMarkdown = (text) => {
+    if (!text) return '';
+    
+    // Convert markdown to HTML with proper formatting
+    let html = text;
+    
+    // Headers
+    html = html.replace(/^### (.*$)/gim, '<h3 class="text-lg font-semibold mt-4 mb-2">$1</h3>');
+    html = html.replace(/^## (.*$)/gim, '<h2 class="text-xl font-semibold mt-4 mb-2">$1</h2>');
+    html = html.replace(/^# (.*$)/gim, '<h1 class="text-2xl font-bold mt-4 mb-2">$1</h1>');
+    
+    // Bold
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold">$1</strong>');
+    
+    // Italic
+    html = html.replace(/\*(.*?)\*/g, '<em class="italic">$1</em>');
+    
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, `<code class="px-1 py-0.5 rounded text-xs font-mono ${isDark ? 'bg-slate-700 text-blue-300' : 'bg-slate-100 text-blue-600'}">$1</code>`);
+    
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-600 underline">$1</a>');
+    
+    // Unordered lists
+    html = html.replace(/^\- (.*$)/gim, '<li class="ml-4">• $1</li>');
+    html = html.replace(/(<li class="ml-4">.*<\/li>)/s, '<ul class="my-2">$1</ul>');
+    
+    // Numbered lists
+    html = html.replace(/^\d+\. (.*$)/gim, '<li class="ml-4">$1</li>');
+    
+    // Line breaks
+    html = html.replace(/\n\n/g, '<br/><br/>');
+    html = html.replace(/\n/g, '<br/>');
+    
+    return html;
+  };
+
+  return (
+    <div 
+      className={`markdown-content text-sm leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-700'}`}
+      dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
+      style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+    />
+  );
+};
+
 // Simple Emoji Picker Component
 const EmojiPicker = ({ onEmojiSelect, isDark }) => {
   const emojis = [
@@ -422,19 +470,10 @@ export default function YesReplyDashboard() {
   const [isLoadingThread, setIsLoadingThread] = useState(false);
   const [showThreadMessageDropdown, setShowThreadMessageDropdown] = useState(false);
   
-  // Smart Summary state
-  const [showSummaryModal, setShowSummaryModal] = useState(false);
-  const [summary, setSummary] = useState('');
-  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
-  const [summaryError, setSummaryError] = useState(null);
-  
-  // Meeting Scheduling state
-  const [showMeetingModal, setShowMeetingModal] = useState(false);
-  const [meetingDate, setMeetingDate] = useState('');
-  const [meetingTime, setMeetingTime] = useState('');
-  const [meetingDuration, setMeetingDuration] = useState(30); // minutes
-  const [meetingLocation, setMeetingLocation] = useState('');
-  const [meetingDescription, setMeetingDescription] = useState('');
+  // AI Assist state
+  const [showAskModal, setShowAskModal] = useState(false);
+  const [askQuestion, setAskQuestion] = useState('');
+  const [isProcessingAI, setIsProcessingAI] = useState(false);
   
   // Gamification state
   const [currentStreak, setCurrentStreak] = useState(3);
@@ -558,285 +597,22 @@ export default function YesReplyDashboard() {
     }
   };
   
-  // Generate Google Calendar link
-  const generateGoogleCalendarLink = (date, time, duration, location, description) => {
-    const dateObj = new Date(`${date}T${time}`);
-    const endTime = new Date(dateObj.getTime() + duration * 60000);
+  // AI Assist: Summary - Adds summary as email in thread
+  const handleAISummary = async () => {
+    if (!selectedThread) return;
     
-    // Format dates for Google Calendar (YYYYMMDDTHHMMSS)
-    const formatGoogleDate = (d) => {
-      const year = d.getFullYear();
-      const month = String(d.getMonth() + 1).padStart(2, '0');
-      const day = String(d.getDate()).padStart(2, '0');
-      const hours = String(d.getHours()).padStart(2, '0');
-      const minutes = String(d.getMinutes()).padStart(2, '0');
-      const seconds = String(d.getSeconds()).padStart(2, '0');
-      return `${year}${month}${day}T${hours}${minutes}${seconds}`;
-    };
-    
-    const meetingTitle = selectedThread?.subject || 'Meeting Invitation';
-    const startDate = formatGoogleDate(dateObj);
-    const endDate = formatGoogleDate(endTime);
-    
-    // Build Google Calendar URL
-    const params = new URLSearchParams({
-      action: 'TEMPLATE',
-      text: meetingTitle,
-      dates: `${startDate}/${endDate}`,
-      details: description || '',
-      location: location || '',
-      sf: 'true',
-      output: 'xml'
-    });
-    
-    return `https://calendar.google.com/calendar/render?${params.toString()}`;
-  };
-  
-  // Generate meeting message and ICS file
-  const generateMeetingMessage = (date, time, duration, location, description) => {
-    const dateObj = new Date(`${date}T${time}`);
-    const endTime = new Date(dateObj.getTime() + duration * 60000);
-    
-    const formatDate = (d) => {
-      return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    };
-    
-    const formatTime = (d) => {
-      return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    };
-    
-    // Get recipient name from selected thread
-    const recipientName = selectedThread?.sender?.first_name || selectedThread?.receiver?.first_name || '';
-    const greeting = recipientName ? `Hi ${recipientName},` : 'Hi there,';
-    
-    // Generate Google Calendar link
-    const googleCalendarLink = generateGoogleCalendarLink(date, time, duration, location, description);
-    
-    // Build meeting details
-    let message = `${greeting}\n\n`;
-    message += `I'd like to schedule a meeting with you. Here are the details:\n\n`;
-    message += `📅 Date: ${formatDate(dateObj)}\n`;
-    message += `🕐 Time: ${formatTime(dateObj)} - ${formatTime(endTime)}\n`;
-    message += `⏱️ Duration: ${duration} minutes\n`;
-    
-    if (location) {
-      message += `📍 Location: ${location}\n`;
-    }
-    
-    if (description) {
-      message += `\n📝 Details:\n${description}\n`;
-    }
-    
-    message += `\n📎 Add to Calendar:\n`;
-    message += `\nClick here to add to Google Calendar:\n${googleCalendarLink}\n\n`;
-    message += `Or use the attached .ics file to add to any calendar application\n`;
-    
-    message += `\nPlease let me know if this time works for you, or if you'd prefer an alternative time.\n\n`;
-    message += `Looking forward to our conversation!\n\n`;
-    message += `Best regards,\n`;
-    message += currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Best regards';
-    
-    return message;
-  };
-  
-  // Create ICS file attachment
-  const createICSAttachment = async (date, time, duration, location, description) => {
-    const dateObj = new Date(`${date}T${time}`);
-    const endTime = new Date(dateObj.getTime() + duration * 60000);
-    
-    // Get current user info
-    const organizerName = currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Meeting Organizer';
-    const organizerEmail = currentUser ? `${currentUser.username}@yesreply.tech` : 'organizer@yesreply.tech';
-    
-    // Get recipient info from selected thread
-    const recipientEmail = selectedThread?.receiver?.email || selectedThread?.sender?.email || 'recipient@yesreply.tech';
-    
-    const meetingTitle = selectedThread?.subject || 'Meeting Invitation';
-    
-    // Format dates for ICS (UTC format: YYYYMMDDTHHMMSSZ)
-    const formatICSDate = (d) => {
-      const utc = new Date(d.getTime() - d.getTimezoneOffset() * 60000);
-      return utc.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    };
-    
-    const dtstart = formatICSDate(dateObj);
-    const dtend = formatICSDate(endTime);
-    const dtstamp = formatICSDate(new Date());
-    
-    // Generate ICS content
-    const icsContent = [
-      'BEGIN:VCALENDAR',
-      'VERSION:2.0',
-      'PRODID:-//YesReply//Meeting Scheduler//EN',
-      'CALSCALE:GREGORIAN',
-      'METHOD:REQUEST',
-      'BEGIN:VEVENT',
-      `UID:${Date.now()}-${Math.random().toString(36).substr(2, 9)}@yesreply.tech`,
-      `DTSTAMP:${dtstamp}`,
-      `DTSTART:${dtstart}`,
-      `DTEND:${dtend}`,
-      `SUMMARY:${meetingTitle}`,
-      `ORGANIZER;CN=${organizerName}:MAILTO:${organizerEmail}`,
-      `ATTENDEE;CN=${recipientEmail};RSVP=TRUE:MAILTO:${recipientEmail}`,
-      'STATUS:CONFIRMED',
-      'SEQUENCE:0',
-    ];
-    
-    if (description) {
-      icsContent.push(`DESCRIPTION:${description.replace(/\n/g, '\\n')}`);
-    }
-    
-    if (location) {
-      icsContent.push(`LOCATION:${location}`);
-    }
-    
-    icsContent.push(
-      'BEGIN:VALARM',
-      'TRIGGER:-PT15M',
-      'ACTION:DISPLAY',
-      `DESCRIPTION:Reminder: ${meetingTitle}`,
-      'END:VALARM',
-      'END:VEVENT',
-      'END:VCALENDAR'
-    );
-    
-    const icsText = icsContent.join('\r\n');
-    
-    // Convert to base64
-    const icsBase64 = btoa(unescape(encodeURIComponent(icsText)));
-    
-    return {
-      filename: `meeting_${date.replace(/-/g, '')}_${time.replace(/:/g, '')}.ics`,
-      content_type: 'text/calendar; charset=utf-8; method=REQUEST',
-      data: icsBase64,
-      size: icsText.length
-    };
-  };
-  
-  // Generate HTML version of meeting message with clickable link
-  const generateMeetingMessageHTML = (date, time, duration, location, description) => {
-    const dateObj = new Date(`${date}T${time}`);
-    const endTime = new Date(dateObj.getTime() + duration * 60000);
-    
-    const formatDate = (d) => {
-      return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-    };
-    
-    const formatTime = (d) => {
-      return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    };
-    
-    // Get recipient name from selected thread
-    const recipientName = selectedThread?.sender?.first_name || selectedThread?.receiver?.first_name || '';
-    const greeting = recipientName ? `Hi ${recipientName},` : 'Hi there,';
-    
-    // Generate Google Calendar link
-    const googleCalendarLink = generateGoogleCalendarLink(date, time, duration, location, description);
-    
-    // Build HTML message
-    let htmlMessage = `<p>${greeting}</p>`;
-    htmlMessage += `<p>I'd like to schedule a meeting with you. Here are the details:</p>`;
-    htmlMessage += `<ul style="list-style: none; padding-left: 0;">`;
-    htmlMessage += `<li>📅 <strong>Date:</strong> ${formatDate(dateObj)}</li>`;
-    htmlMessage += `<li>🕐 <strong>Time:</strong> ${formatTime(dateObj)} - ${formatTime(endTime)}</li>`;
-    htmlMessage += `<li>⏱️ <strong>Duration:</strong> ${duration} minutes</li>`;
-    
-    if (location) {
-      htmlMessage += `<li>📍 <strong>Location:</strong> ${location}</li>`;
-    }
-    
-    htmlMessage += `</ul>`;
-    
-    if (description) {
-      htmlMessage += `<p><strong>📝 Details:</strong><br>${description.replace(/\n/g, '<br>')}</p>`;
-    }
-    
-    htmlMessage += `<p><strong>📎 Add to Calendar:</strong></p>`;
-    htmlMessage += `<p style="margin: 10px 0;">`;
-    htmlMessage += `<a href="${googleCalendarLink}" style="display: inline-block; padding: 10px 20px; background-color: #4285f4; color: white; text-decoration: none; border-radius: 5px; font-weight: bold; margin-right: 10px;" target="_blank">📅 Add to Google Calendar</a>`;
-    htmlMessage += `</p>`;
-    htmlMessage += `<p style="color: #666; font-size: 12px;">Or use the attached .ics file to add to any calendar application</p>`;
-    
-    htmlMessage += `<p>Please let me know if this time works for you, or if you'd prefer an alternative time.</p>`;
-    htmlMessage += `<p>Looking forward to our conversation!</p>`;
-    htmlMessage += `<p>Best regards,<br>${currentUser ? `${currentUser.first_name} ${currentUser.last_name}` : 'Best regards'}</p>`;
-    
-    return htmlMessage;
-  };
-  
-  // Handle meeting scheduling
-  const handleScheduleMeeting = async () => {
-    if (!meetingDate || !meetingTime || !selectedThread) {
-      alert('Please fill in all required fields (Date and Time)');
-      return;
-    }
-    
-    try {
-      // Generate meeting message (plain text)
-      const meetingMessage = generateMeetingMessage(
-        meetingDate,
-        meetingTime,
-        meetingDuration,
-        meetingLocation,
-        meetingDescription
-      );
-      
-      // Generate HTML version with clickable link
-      const meetingMessageHTML = generateMeetingMessageHTML(
-        meetingDate,
-        meetingTime,
-        meetingDuration,
-        meetingLocation,
-        meetingDescription
-      );
-      
-      // Create ICS attachment
-      const icsAttachment = await createICSAttachment(
-        meetingDate,
-        meetingTime,
-        meetingDuration,
-        meetingLocation,
-        meetingDescription
-      );
-      
-      // Set reply text with meeting message
-      setReplyText(meetingMessage);
-      
-      // Store HTML version for sending (we'll need to update the reply function to use it)
-      // For now, we'll store it in a state or pass it along
-      
-      // Set attachment (ICS file)
-      setReplyAttachments([icsAttachment]);
-      
-      // Store HTML message in a way that can be used when sending
-      // We'll need to check how the reply function handles HTML
-      
-      // Close modal
-      setShowMeetingModal(false);
-      
-      // Optionally auto-focus the reply textarea
-      // The user can now review and send the email with the meeting invite
-    } catch (error) {
-      console.error('Error generating meeting invite:', error);
-      alert('Failed to generate meeting invite. Please try again.');
-    }
-  };
-  
-  // Fetch smart summary for an email thread
-  const fetchSmartSummary = async (emailId) => {
-    setIsLoadingSummary(true);
-    setSummaryError(null);
-    setSummary('');
-    setShowSummaryModal(true);
+    setIsProcessingAI(true);
+    setShowThreadMessageDropdown(false);
     
     try {
       const token = getAuthToken();
       if (!token) {
-        setSummaryError('Authentication required');
+        alert('Authentication required');
         return;
       }
       
-      const response = await fetch(`${API_BASE_URL}/api/emails/${emailId}/smart-summary`, {
+      const response = await fetch(`${API_BASE_URL}/api/emails/${selectedThread.id}/ai-summary`, {
+        method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -844,17 +620,156 @@ export default function YesReplyDashboard() {
       });
       
       if (response.ok) {
-        const data = await response.json();
-        setSummary(data.summary || 'No summary available');
+        const newEmail = await response.json();
+        // Add the new AI email to the thread immediately
+        if (fullThread && fullThread.thread_emails) {
+          setFullThread({
+            ...fullThread,
+            thread_emails: [...fullThread.thread_emails, newEmail]
+          });
+        }
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Failed to generate summary' }));
-        setSummaryError(errorData.detail || 'Failed to generate summary');
+        alert(errorData.detail || 'Failed to generate summary');
       }
     } catch (error) {
-      console.error('Error fetching smart summary:', error);
-      setSummaryError('Failed to generate summary. Please try again.');
+      console.error('Error generating AI summary:', error);
+      alert('Failed to generate summary. Please try again.');
     } finally {
-      setIsLoadingSummary(false);
+      setIsProcessingAI(false);
+    }
+  };
+  
+  // AI Assist: Ask - Adds AI answer as email in thread
+  const handleAIAsk = async () => {
+    if (!selectedThread || !askQuestion.trim()) return;
+    
+    setIsProcessingAI(true);
+    setShowAskModal(false);
+    
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        alert('Authentication required');
+        return;
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/emails/${selectedThread.id}/ai-ask`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          question: askQuestion
+        })
+      });
+      
+      if (response.ok) {
+        const newEmail = await response.json();
+        // Clear question and add new AI email to thread
+        setAskQuestion('');
+        if (fullThread && fullThread.thread_emails) {
+          setFullThread({
+            ...fullThread,
+            thread_emails: [...fullThread.thread_emails, newEmail]
+          });
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to get answer' }));
+        alert(errorData.detail || 'Failed to get answer');
+      }
+    } catch (error) {
+      console.error('Error asking AI:', error);
+      alert('Failed to get answer. Please try again.');
+    } finally {
+      setIsProcessingAI(false);
+    }
+  };
+  
+  // AI Assist: Schedule - Analyzes conversation and creates meeting invite
+  const handleAISchedule = async () => {
+    if (!selectedThread) return;
+    
+    setIsProcessingAI(true);
+    setShowThreadMessageDropdown(false);
+    
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        alert('Authentication required');
+        return;
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/emails/${selectedThread.id}/ai-schedule`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const newEmail = await response.json();
+        // Add new AI email to thread
+        if (fullThread && fullThread.thread_emails) {
+          setFullThread({
+            ...fullThread,
+            thread_emails: [...fullThread.thread_emails, newEmail]
+          });
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to generate schedule' }));
+        alert(errorData.detail || 'Failed to generate schedule');
+      }
+    } catch (error) {
+      console.error('Error generating AI schedule:', error);
+      alert('Failed to generate schedule. Please try again.');
+    } finally {
+      setIsProcessingAI(false);
+    }
+  };
+  
+  // AI Assist: Research - Fact-checks content using browser tool
+  const handleAIResearch = async () => {
+    if (!selectedThread) return;
+    
+    setIsProcessingAI(true);
+    setShowThreadMessageDropdown(false);
+    
+    try {
+      const token = getAuthToken();
+      if (!token) {
+        alert('Authentication required');
+        return;
+      }
+      
+      const response = await fetch(`${API_BASE_URL}/api/emails/${selectedThread.id}/ai-research`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const newEmail = await response.json();
+        // Add new AI email to thread
+        if (fullThread && fullThread.thread_emails) {
+          setFullThread({
+            ...fullThread,
+            thread_emails: [...fullThread.thread_emails, newEmail]
+          });
+        }
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: 'Failed to research content' }));
+        alert(errorData.detail || 'Failed to research content');
+      }
+    } catch (error) {
+      console.error('Error researching with AI:', error);
+      alert('Failed to research content. Please try again.');
+    } finally {
+      setIsProcessingAI(false);
     }
   };
   
@@ -2052,28 +1967,38 @@ export default function YesReplyDashboard() {
                 <div className="relative thread-message-dropdown-menu">
                   <button
                     onClick={() => setShowThreadMessageDropdown(!showThreadMessageDropdown)}
+                    disabled={isProcessingAI}
                     className={`px-3 py-2 text-sm font-medium border transition-all ${
-                      isDark
+                      isProcessingAI
+                        ? isDark
+                          ? 'opacity-50 cursor-not-allowed border-slate-700 text-slate-400'
+                          : 'opacity-50 cursor-not-allowed border-slate-200 text-slate-500'
+                        : isDark
                         ? 'border-slate-700 text-slate-300 hover:bg-slate-800'
                         : 'border-slate-200 text-slate-600 hover:bg-slate-50'
                     }`}
                     title="AI Assist"
                   >
-                    AI Assist
+                    {isProcessingAI ? (
+                      <span className={`flex items-center gap-2 ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                        <Sparkles size={16} className="animate-pulse" />
+                        Processing...
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-2">
+                        <Sparkles size={16} />
+                        AI Assist
+                      </span>
+                    )}
                   </button>
                   
-                  {showThreadMessageDropdown && (
-                    <div className={`absolute right-0 mt-2 w-56 border z-50 ${
+                  {showThreadMessageDropdown && !isProcessingAI && (
+                    <div className={`absolute right-0 mt-2 w-64 border z-50 ${
                       isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
                     }`}>
                       <div className="py-1">
                         <button
-                          onClick={() => {
-                            setShowThreadMessageDropdown(false);
-                            if (selectedThread) {
-                              fetchSmartSummary(selectedThread.id);
-                            }
-                          }}
+                          onClick={handleAISummary}
                           className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all ${
                             isDark
                               ? 'text-slate-300 hover:bg-slate-700'
@@ -2081,13 +2006,18 @@ export default function YesReplyDashboard() {
                           }`}
                         >
                           <FileText size={16} />
-                          <span>Smart summary</span>
+                          <div className="flex-1 text-left">
+                            <div className="font-medium">Summary</div>
+                            <div className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                              AI-generated summary
+                            </div>
+                          </div>
                         </button>
                         
                         <button
                           onClick={() => {
                             setShowThreadMessageDropdown(false);
-                            setShowMeetingModal(true);
+                            setShowAskModal(true);
                           }}
                           className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all ${
                             isDark
@@ -2095,8 +2025,47 @@ export default function YesReplyDashboard() {
                               : 'text-slate-700 hover:bg-slate-50'
                           }`}
                         >
+                          <MessageSquare size={16} />
+                          <div className="flex-1 text-left">
+                            <div className="font-medium">Ask</div>
+                            <div className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                              Ask about this thread
+                            </div>
+                          </div>
+                        </button>
+                        
+                        <button
+                          onClick={handleAISchedule}
+                          className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all ${
+                            isDark
+                              ? 'text-slate-300 hover:bg-slate-700'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
                           <Calendar size={16} />
-                          <span>Schedule a meeting</span>
+                          <div className="flex-1 text-left">
+                            <div className="font-medium">Schedule</div>
+                            <div className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                              Create meeting from convo
+                            </div>
+                          </div>
+                        </button>
+                        
+                        <button
+                          onClick={handleAIResearch}
+                          className={`w-full flex items-center gap-3 px-4 py-3 text-sm transition-all ${
+                            isDark
+                              ? 'text-slate-300 hover:bg-slate-700'
+                              : 'text-slate-700 hover:bg-slate-50'
+                          }`}
+                        >
+                          <Activity size={16} />
+                          <div className="flex-1 text-left">
+                            <div className="font-medium">Research</div>
+                            <div className={`text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                              Fact-check content
+                            </div>
+                          </div>
                         </button>
                       </div>
                     </div>
@@ -2143,12 +2112,19 @@ export default function YesReplyDashboard() {
                 <div className="px-6 py-6">
                   <div className="space-y-6">
                     {fullThread.thread_emails.map((email, idx) => {
+                      // Check if this is an AI-generated email
+                      const isAIEmail = email.subject && (
+                        email.subject.startsWith('🤖') || 
+                        email.subject.startsWith('🗓️') || 
+                        email.subject.startsWith('🔍')
+                      );
+                      
                       // Check if this email is from the current user (sender) or to the current user (receiver)
                       const isFromCurrentUser = currentUser && email.sent_by === currentUser.id;
-                      const senderName = email.sender_username || email.sender_email?.split('@')[0] || 'Unknown';
-                      const senderEmail = email.sender_email || `${email.sender_username}@yesreply.tech` || '';
+                      const senderName = isAIEmail ? 'AI Assistant' : (email.sender_username || email.sender_email?.split('@')[0] || 'Unknown');
+                      const senderEmail = isAIEmail ? 'ai@yesreply.tech' : (email.sender_email || `${email.sender_username}@yesreply.tech` || '');
                       // Get initial from sender name
-                      const senderInitial = senderName.charAt(0).toUpperCase();
+                      const senderInitial = isAIEmail ? '🤖' : senderName.charAt(0).toUpperCase();
                       const isFirstEmail = idx === 0;
                       const isReply = idx > 0;
                       
@@ -2157,6 +2133,12 @@ export default function YesReplyDashboard() {
                           !isFirstEmail ? 'border-t' : ''
                         } ${
                           isDark ? 'border-slate-800' : 'border-slate-200'
+                        } ${
+                          isAIEmail 
+                            ? isDark 
+                              ? 'border-2 border-blue-600/30 bg-blue-900/10 rounded-lg p-4 my-2' 
+                              : 'border-2 border-blue-300/50 bg-blue-50/30 rounded-lg p-4 my-2'
+                            : ''
                         }`}>
                             
                             <div className="relative">
@@ -2165,7 +2147,11 @@ export default function YesReplyDashboard() {
                                   {/* Profile Picture */}
                                   <div className="flex-shrink-0">
                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                                      isFromCurrentUser
+                                      isAIEmail
+                                        ? isDark
+                                          ? 'bg-gradient-to-br from-purple-500 to-blue-600'
+                                          : 'bg-gradient-to-br from-purple-400 to-blue-500'
+                                        : isFromCurrentUser
                                         ? isDark 
                                           ? 'bg-gradient-to-br from-blue-500 to-blue-600' 
                                           : 'bg-gradient-to-br from-blue-400 to-blue-500'
@@ -2173,8 +2159,8 @@ export default function YesReplyDashboard() {
                                           ? 'bg-slate-700' 
                                           : 'bg-slate-300'
                                     }`}>
-                                      <span className={`text-sm font-semibold ${
-                                        isFromCurrentUser 
+                                      <span className={`${isAIEmail ? 'text-lg' : 'text-sm'} font-semibold ${
+                                        isAIEmail || isFromCurrentUser 
                                           ? 'text-white' 
                                           : isDark ? 'text-slate-300' : 'text-slate-600'
                                       }`}>
@@ -2224,11 +2210,15 @@ export default function YesReplyDashboard() {
                                     </div>
                                     
                                     {/* Message Body */}
-                                    <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere ${
-                                      isDark ? 'text-slate-300' : 'text-slate-700'
-                                    }`} style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
-                                      {email.body}
-                                    </div>
+                                    {isAIEmail ? (
+                                      <MarkdownRenderer content={email.body} isDark={isDark} />
+                                    ) : (
+                                      <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere ${
+                                        isDark ? 'text-slate-300' : 'text-slate-700'
+                                      }`} style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                                        {email.body}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               </div>
@@ -2618,14 +2608,14 @@ export default function YesReplyDashboard() {
         </div>
       )}
 
-      {/* Smart Summary Modal */}
-      {showSummaryModal && (
+      {/* AI Ask Modal */}
+      {showAskModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div 
             className="absolute inset-0 bg-black/50"
-            onClick={() => setShowSummaryModal(false)}
+            onClick={() => setShowAskModal(false)}
           />
-          <div className={`relative w-full max-w-2xl max-h-[80vh] overflow-hidden border ${
+          <div className={`relative w-full max-w-lg overflow-hidden border ${
             isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
           }`}>
             {/* Header */}
@@ -2633,15 +2623,15 @@ export default function YesReplyDashboard() {
               isDark ? 'border-slate-800' : 'border-slate-200'
             }`}>
               <div className="flex items-center gap-3">
-                <FileText size={20} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
+                <MessageSquare size={20} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
                 <h2 className={`text-xl font-semibold ${
                   isDark ? 'text-white' : 'text-slate-900'
                 }`}>
-                  Smart Summary
+                  Ask AI
                 </h2>
               </div>
               <button
-                onClick={() => setShowSummaryModal(false)}
+                onClick={() => setShowAskModal(false)}
                 className={`p-2 transition-colors ${
                   isDark 
                     ? 'text-slate-400 hover:text-white hover:bg-slate-800' 
@@ -2653,204 +2643,28 @@ export default function YesReplyDashboard() {
             </div>
 
             {/* Content */}
-            <div className={`p-6 overflow-y-auto max-h-[calc(80vh-140px)] ${
+            <div className={`p-6 ${
               isDark ? 'text-slate-300' : 'text-slate-700'
             }`}>
-              {isLoadingSummary ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="flex flex-col items-center gap-3">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500" />
-                    <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                      Generating summary...
-                    </p>
-                  </div>
-                </div>
-              ) : summaryError ? (
-                <div className={`p-4 border ${
-                  isDark 
-                    ? 'bg-red-900/20 border-red-800 text-red-300' 
-                    : 'bg-red-50 border-red-200 text-red-700'
-                }`}>
-                  <p className="font-medium">Error</p>
-                  <p className="text-sm mt-1">{summaryError}</p>
-                </div>
-              ) : summary ? (
-                <div className="prose prose-slate max-w-none">
-                  <div className={`whitespace-pre-wrap ${
-                    isDark ? 'text-slate-300' : 'text-slate-700'
-                  }`}>
-                    {summary}
-                  </div>
-                </div>
-              ) : (
-                <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
-                  No summary available.
-                </p>
-              )}
-            </div>
-
-            {/* Footer */}
-            <div className={`flex items-center justify-end p-6 border-t ${
-              isDark ? 'border-slate-800' : 'border-slate-200'
-            }`}>
-              <button
-                onClick={() => setShowSummaryModal(false)}
-                className={`px-6 py-2 text-sm font-medium transition-colors ${
+              <label className={`block text-sm font-medium mb-3 ${
+                isDark ? 'text-slate-300' : 'text-slate-700'
+              }`}>
+                What would you like to know about this email thread?
+              </label>
+              <textarea
+                value={askQuestion}
+                onChange={(e) => setAskQuestion(e.target.value)}
+                placeholder="e.g., What are the key action items? Who needs to follow up?"
+                rows={4}
+                className={`w-full px-4 py-3 border text-sm ${
                   isDark
-                    ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-                }`}
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Schedule Meeting Modal */}
-      {showMeetingModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div 
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setShowMeetingModal(false)}
-          />
-          <div className={`relative w-full max-w-md overflow-hidden border ${
-            isDark ? 'bg-slate-900 border-slate-700' : 'bg-white border-slate-200'
-          }`}>
-            {/* Header */}
-            <div className={`flex items-center justify-between p-6 border-b ${
-              isDark ? 'border-slate-800' : 'border-slate-200'
-            }`}>
-              <div className="flex items-center gap-3">
-                <Calendar size={20} className={isDark ? 'text-blue-400' : 'text-blue-600'} />
-                <h2 className={`text-xl font-semibold ${
-                  isDark ? 'text-white' : 'text-slate-900'
-                }`}>
-                  Schedule Meeting
-                </h2>
-              </div>
-              <button
-                onClick={() => setShowMeetingModal(false)}
-                className={`p-2 transition-colors ${
-                  isDark 
-                    ? 'text-slate-400 hover:text-white hover:bg-slate-800' 
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-                }`}
-              >
-                <X size={20} />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className={`p-6 space-y-4 ${
-              isDark ? 'text-slate-300' : 'text-slate-700'
-            }`}>
-              {/* Date */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${
-                  isDark ? 'text-slate-300' : 'text-slate-700'
-                }`}>
-                  Date <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="date"
-                  value={meetingDate}
-                  onChange={(e) => setMeetingDate(e.target.value)}
-                  min={new Date().toISOString().split('T')[0]}
-                  className={`w-full px-4 py-2 border ${
-                    isDark
-                      ? 'bg-slate-800 border-slate-700 text-white'
-                      : 'bg-white border-slate-200 text-slate-900'
-                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                  required
-                />
-              </div>
-
-              {/* Time */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${
-                  isDark ? 'text-slate-300' : 'text-slate-700'
-                }`}>
-                  Time <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="time"
-                  value={meetingTime}
-                  onChange={(e) => setMeetingTime(e.target.value)}
-                  className={`w-full px-4 py-2 border ${
-                    isDark
-                      ? 'bg-slate-800 border-slate-700 text-white'
-                      : 'bg-white border-slate-200 text-slate-900'
-                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                  required
-                />
-              </div>
-
-              {/* Duration */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${
-                  isDark ? 'text-slate-300' : 'text-slate-700'
-                }`}>
-                  Duration (minutes)
-                </label>
-                <select
-                  value={meetingDuration}
-                  onChange={(e) => setMeetingDuration(parseInt(e.target.value))}
-                  className={`w-full px-4 py-2 border ${
-                    isDark
-                      ? 'bg-slate-800 border-slate-700 text-white'
-                      : 'bg-white border-slate-200 text-slate-900'
-                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                >
-                  <option value={15}>15 minutes</option>
-                  <option value={30}>30 minutes</option>
-                  <option value={45}>45 minutes</option>
-                  <option value={60}>1 hour</option>
-                  <option value={90}>1.5 hours</option>
-                  <option value={120}>2 hours</option>
-                </select>
-              </div>
-
-              {/* Location */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${
-                  isDark ? 'text-slate-300' : 'text-slate-700'
-                }`}>
-                  Location (optional)
-                </label>
-                <input
-                  type="text"
-                  value={meetingLocation}
-                  onChange={(e) => setMeetingLocation(e.target.value)}
-                  placeholder="e.g., Conference Room A, Zoom link, etc."
-                  className={`w-full px-4 py-2 border ${
-                    isDark
-                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500'
-                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                />
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className={`block text-sm font-medium mb-2 ${
-                  isDark ? 'text-slate-300' : 'text-slate-700'
-                }`}>
-                  Description (optional)
-                </label>
-                <textarea
-                  value={meetingDescription}
-                  onChange={(e) => setMeetingDescription(e.target.value)}
-                  placeholder="Add any additional details about the meeting..."
-                  rows={3}
-                  className={`w-full px-4 py-2 border ${
-                    isDark
-                      ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500'
-                      : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                  } focus:outline-none focus:ring-2 focus:ring-blue-500`}
-                />
-              </div>
+                    ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500'
+                    : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
+                } focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              />
+              <p className={`mt-2 text-xs ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
+                AI will analyze the thread and add its response as an email.
+              </p>
             </div>
 
             {/* Footer */}
@@ -2858,7 +2672,7 @@ export default function YesReplyDashboard() {
               isDark ? 'border-slate-800' : 'border-slate-200'
             }`}>
               <button
-                onClick={() => setShowMeetingModal(false)}
+                onClick={() => setShowAskModal(false)}
                 className={`px-6 py-2 text-sm font-medium transition-colors ${
                   isDark
                     ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
@@ -2868,15 +2682,16 @@ export default function YesReplyDashboard() {
                 Cancel
               </button>
               <button
-                onClick={handleScheduleMeeting}
-                disabled={!meetingDate || !meetingTime}
-                className={`px-6 py-2 text-sm font-medium text-white transition-colors ${
-                  !meetingDate || !meetingTime
+                onClick={handleAIAsk}
+                disabled={!askQuestion.trim()}
+                className={`px-6 py-2 text-sm font-medium text-white transition-colors flex items-center gap-2 ${
+                  !askQuestion.trim()
                     ? 'bg-slate-600 cursor-not-allowed'
                     : 'bg-blue-600 hover:bg-blue-700'
                 }`}
               >
-                Create Meeting Invite
+                <Sparkles size={16} />
+                Ask AI
               </button>
             </div>
           </div>

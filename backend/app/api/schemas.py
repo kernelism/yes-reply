@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
@@ -28,6 +28,8 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    # model_config = ConfigDict(extra="ignore")  # Ignore extra fields sent by frontend
+    
     username: Optional[str] = Field(None, min_length=3, max_length=50, pattern=r"^[a-z0-9_-]+$")
     first_name: Optional[str] = Field(None, min_length=1, max_length=100)
     last_name: Optional[str] = Field(None, min_length=1, max_length=100)
@@ -217,6 +219,11 @@ class SmartSummaryResponse(BaseModel):
     """Response containing AI-generated email thread summary"""
     summary: str
     thread_id: str
+
+
+class AIAskRequest(BaseModel):
+    """Request to ask AI a question about an email thread"""
+    question: str = Field(..., min_length=1, max_length=1000)
 
 
 class BulkEmailOperation(BaseModel):
