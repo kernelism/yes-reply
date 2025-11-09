@@ -2124,113 +2124,237 @@ export default function YesReplyDashboard() {
               <div className="flex-1 overflow-y-auto">
                     <div className="max-w-4xl mx-auto">
                       {/* Subject Header */}
-                      <div className={`px-4 py-4 border-b ${
-                        isDark ? 'border-slate-800' : 'border-slate-200'
+                      <div className={`px-6 py-5 border-b ${
+                        isDark ? 'border-slate-800/50' : 'border-slate-200/50'
                       }`}>
-                        <h2 className={`text-lg font-medium ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                        <h2 className={`text-xl font-semibold ${isDark ? 'text-white' : 'text-slate-900'}`}>
                           {selectedThread.subject}
                         </h2>
                       </div>
 
                       {/* Messages */}
               {isLoadingThread ? (
-                <div className="px-4 py-8 text-center">
+                <div className="px-6 py-12 text-center">
                   <div className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
                     Loading thread...
                   </div>
                 </div>
               ) : fullThread && fullThread.thread_emails ? (
-                fullThread.thread_emails.map((email, idx) => (
-                  <div
-                    key={email.id}
-                    className={`px-4 py-4 border-b ${
-                      isDark ? 'border-slate-800' : 'border-slate-200'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                              {email.sender_username || email.sender_email}
-                            </span>
-                            {email.payment_amount > 0 && (
-                              <span className={`text-xs font-mono px-2 py-0.5 ${
-                                isDark
-                                  ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800'
-                                  : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                              }`}>
-                                +${email.payment_amount.toFixed(2)}
-                              </span>
-                            )}
-                            <span className={`text-xs font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-                              {new Date(email.created_at).toLocaleString()}
-                            </span>
-                          </div>
-                        </div>
-                        <div className={`text-sm leading-relaxed whitespace-pre-wrap ${
-                          isDark ? 'text-slate-300' : 'text-slate-700'
+                <div className="px-6 py-6">
+                  <div className="space-y-6">
+                    {fullThread.thread_emails.map((email, idx) => {
+                      // Check if this email is from the current user (sender) or to the current user (receiver)
+                      const isFromCurrentUser = currentUser && email.sent_by === currentUser.id;
+                      const senderName = email.sender_username || email.sender_email?.split('@')[0] || 'Unknown';
+                      const senderEmail = email.sender_email || `${email.sender_username}@yesreply.tech` || '';
+                      // Get initial from sender name
+                      const senderInitial = senderName.charAt(0).toUpperCase();
+                      const isFirstEmail = idx === 0;
+                      const isReply = idx > 0;
+                      
+                      return (
+                        <div key={email.id} className={`relative ${
+                          !isFirstEmail ? 'border-t' : ''
+                        } ${
+                          isDark ? 'border-slate-800' : 'border-slate-200'
                         }`}>
-                          {email.body}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                selectedThread.messages.map((message, idx) => (
-                <div
-                  key={message.id}
-                          className={`px-4 py-4 border-b ${
-                            isDark ? 'border-slate-800' : 'border-slate-200'
-                    }`}
-                  >
-                          <div className="flex items-start gap-3">
-                    <div className="flex-1 min-w-0">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-slate-900'}`}>
-                            {message.sender}
-                            </span>
-                          {message.earned > 0 && (
-                                    <span className={`text-xs font-mono px-2 py-0.5 ${
-                                      isDark
-                                        ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800'
-                                        : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                            
+                            <div className="relative">
+                              <div className={isFirstEmail ? 'py-6' : 'py-5'}>
+                                <div className="flex items-start gap-4">
+                                  {/* Profile Picture */}
+                                  <div className="flex-shrink-0">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                      isFromCurrentUser
+                                        ? isDark 
+                                          ? 'bg-gradient-to-br from-blue-500 to-blue-600' 
+                                          : 'bg-gradient-to-br from-blue-400 to-blue-500'
+                                        : isDark 
+                                          ? 'bg-slate-700' 
+                                          : 'bg-slate-300'
                                     }`}>
-                                +${message.earned.toFixed(2)}
-                                </span>
-                          )}
-                                  <span className={`text-xs font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-                            {message.time}
-                            </span>
-                                </div>
-                        </div>
-                              <div className={`text-sm leading-relaxed whitespace-pre-wrap ${
-                          isDark ? 'text-slate-300' : 'text-slate-700'
-                              }`}>
-                        {message.content}
-                      </div>
+                                      <span className={`text-sm font-semibold ${
+                                        isFromCurrentUser 
+                                          ? 'text-white' 
+                                          : isDark ? 'text-slate-300' : 'text-slate-600'
+                                      }`}>
+                                        {senderInitial}
+                                      </span>
+                                    </div>
                                   </div>
+                                  
+                                  {/* Message Content - Gmail Style */}
+                                  <div className="flex-1 min-w-0">
+                                    {/* Sender Info - Bold and Prominent */}
+                                    <div className="flex items-start justify-between gap-3 mb-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className={`text-base font-semibold break-words ${
+                                            isDark ? 'text-white' : 'text-slate-900'
+                                          }`}>
+                                            {senderName}
+                                          </span>
+                                          <span className={`text-xs break-words ${
+                                            isDark ? 'text-slate-400' : 'text-slate-600'
+                                          }`}>
+                                            &lt;{senderEmail}&gt;
+                                          </span>
+                                          {email.payment_amount > 0 && (
+                                            <span className={`text-xs font-mono px-2 py-0.5 rounded flex-shrink-0 ${
+                                              isDark
+                                                ? 'bg-emerald-900/20 text-emerald-400 border border-emerald-800/30'
+                                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                            }`}>
+                                              +${email.payment_amount.toFixed(2)}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <span className={`text-xs flex-shrink-0 ${
+                                        isDark ? 'text-slate-500' : 'text-slate-500'
+                                      }`}>
+                                        {new Date(email.created_at).toLocaleString('en-US', { 
+                                          month: 'short',
+                                          day: 'numeric',
+                                          hour: 'numeric', 
+                                          minute: '2-digit',
+                                          hour12: true 
+                                        })}
+                                      </span>
+                                    </div>
+                                    
+                                    {/* Message Body */}
+                                    <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere ${
+                                      isDark ? 'text-slate-300' : 'text-slate-700'
+                                    }`} style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                                      {email.body}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-              ))
+              ) : (
+                <div className="px-6 py-6">
+                  <div className="space-y-6">
+                    {selectedThread.messages.map((message, idx) => {
+                      // For fallback messages, check if sender matches current user
+                      const isFromCurrentUser = currentUser && (
+                        message.sender?.toLowerCase().includes(currentUser.username?.toLowerCase()) ||
+                        message.sender?.toLowerCase().includes(currentUser.email?.toLowerCase())
+                      );
+                      
+                      // Extract email from sender string if available
+                      const senderParts = message.sender?.split('<') || [];
+                      const senderName = senderParts[0]?.trim() || message.sender || 'Unknown';
+                      const senderEmail = senderParts[1]?.replace('>', '').trim() || message.sender || '';
+                      // Get initial from sender name
+                      const senderInitial = senderName.charAt(0).toUpperCase();
+                      const isFirstEmail = idx === 0;
+                      const isReply = idx > 0;
+                      
+                      return (
+                        <div key={message.id} className={`relative ${
+                          !isFirstEmail ? 'border-t' : ''
+                        } ${
+                          isDark ? 'border-slate-800' : 'border-slate-200'
+                        }`}>
+                            
+                            <div className="relative">
+                              <div className={isFirstEmail ? 'py-6' : 'py-5'}>
+                                <div className="flex items-start gap-4">
+                                  {/* Profile Picture */}
+                                  <div className="flex-shrink-0">
+                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                      isFromCurrentUser
+                                        ? isDark 
+                                          ? 'bg-gradient-to-br from-blue-500 to-blue-600' 
+                                          : 'bg-gradient-to-br from-blue-400 to-blue-500'
+                                        : isDark 
+                                          ? 'bg-slate-700' 
+                                          : 'bg-slate-300'
+                                    }`}>
+                                      <span className={`text-sm font-semibold ${
+                                        isFromCurrentUser 
+                                          ? 'text-white' 
+                                          : isDark ? 'text-slate-300' : 'text-slate-600'
+                                      }`}>
+                                        {senderInitial}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  
+                                  {/* Message Content - Gmail Style */}
+                                  <div className="flex-1 min-w-0">
+                                    {/* Sender Info - Bold and Prominent */}
+                                    <div className="flex items-start justify-between gap-3 mb-2">
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className={`text-base font-semibold break-words ${
+                                            isDark ? 'text-white' : 'text-slate-900'
+                                          }`}>
+                                            {senderName}
+                                          </span>
+                                          {senderEmail && senderEmail !== senderName && (
+                                            <span className={`text-xs break-words ${
+                                              isDark ? 'text-slate-400' : 'text-slate-600'
+                                            }`}>
+                                              &lt;{senderEmail}&gt;
+                                            </span>
+                                          )}
+                                          {message.earned > 0 && (
+                                            <span className={`text-xs font-mono px-2 py-0.5 rounded flex-shrink-0 ${
+                                              isDark
+                                                ? 'bg-emerald-900/20 text-emerald-400 border border-emerald-800/30'
+                                                : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                            }`}>
+                                              +${message.earned.toFixed(2)}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <span className={`text-xs flex-shrink-0 ${
+                                        isDark ? 'text-slate-500' : 'text-slate-500'
+                                      }`}>
+                                        {message.time}
+                                      </span>
+                                    </div>
+                                    
+                                    {/* Message Body */}
+                                    <div className={`text-sm leading-relaxed whitespace-pre-wrap break-words overflow-wrap-anywhere ${
+                                      isDark ? 'text-slate-300' : 'text-slate-700'
+                                    }`} style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                                      {message.content}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
               )}
 
                       {/* Reply Box */}
                       {activeView === 'inbox' && (
-                        <div className={`px-4 py-4 border-t ${
-                isDark ? 'border-slate-800' : 'border-slate-200'
+                        <div className={`px-6 py-5 border-t ${
+                isDark ? 'border-slate-800/50' : 'border-slate-200/50'
                         }`}>
                   <textarea
                     value={replyText}
                     onChange={(e) => setReplyText(e.target.value)}
-                            placeholder="Write reply..."
-                            className={`w-full p-2 border text-sm resize-none ${
+                            placeholder="Write a reply..."
+                            className={`w-full p-4 border rounded-lg text-sm resize-none transition-all ${
                       isDark
-                                ? 'bg-slate-900 border-slate-700 text-white placeholder-slate-500'
-                                : 'bg-white border-slate-200 text-slate-900 placeholder-slate-400'
-                            } focus:outline-none focus:border-blue-600`}
+                                ? 'bg-slate-800/40 border-slate-700/30 text-white placeholder-slate-500 focus:border-blue-500/50'
+                                : 'bg-white border-slate-200/50 text-slate-900 placeholder-slate-400 focus:border-blue-500'
+                            } focus:outline-none`}
                             rows={4}
                           />
                           
@@ -2254,23 +2378,23 @@ export default function YesReplyDashboard() {
                             </div>
                           )}
                           
-                          <div className="flex items-center justify-between mt-2 gap-2">
-                            <div className="flex items-center gap-1 relative">
+                          <div className="flex items-center justify-between mt-3 gap-2">
+                            <div className="flex items-center gap-2 relative">
                               <button
                                 onClick={() => setShowReplyEmojiPicker(!showReplyEmojiPicker)}
-                                className={`p-2 border ${
+                                className={`p-2 rounded-lg border transition-all ${
                                   isDark
-                                    ? 'border-slate-700 text-slate-400 hover:bg-slate-800'
-                                    : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                                    ? 'border-slate-700/50 text-slate-400 hover:bg-slate-800/50 hover:border-slate-600'
+                                    : 'border-slate-200/50 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
                                 }`}
                               >
                                 <Smile size={14} />
                               </button>
                               
-                              <label className={`p-2 border cursor-pointer ${
+                              <label className={`p-2 rounded-lg border cursor-pointer transition-all ${
                                 isDark
-                                  ? 'border-slate-700 text-slate-400 hover:bg-slate-800'
-                                  : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                                  ? 'border-slate-700/50 text-slate-400 hover:bg-slate-800/50 hover:border-slate-600'
+                                  : 'border-slate-200/50 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
                               }`}>
                                 <Paperclip size={14} />
                                 <input
