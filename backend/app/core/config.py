@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     BASE_PRICE_LIMIT: float = 2.0  # $2 for unverified users
     LINKEDIN_VERIFIED_PRICE_LIMIT: float = 5.0  # $5 for LinkedIn verified users
     
+    # Gemini AI Configuration
+    GEMINI_API_KEY: Optional[str] = None
+    
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
