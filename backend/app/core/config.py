@@ -1,6 +1,8 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
+from dotenv import load_dotenv
 
+load_dotenv()
 
 class Settings(BaseSettings):
     # Application
@@ -23,9 +25,9 @@ class Settings(BaseSettings):
     AWS_SES_FROM_DOMAIN: str = "yesreply.tech"
     
     # Stripe Configuration
-    STRIPE_SECRET_KEY: Optional[str] = "sk_test_51SRLOFCSsnKFcIrSMK69e8Ut9DqMDgJ69DUHgMWUdX1VhCKDa5FMjPVcN1qCTpcUaO032gztVmbXs7nOYYaR5lwK00iI3rCP4b"
-    STRIPE_PUBLISHABLE_KEY: Optional[str] = "pk_test_51SRLOFCSsnKFcIrScx4i5ujCvLop8ujF4xDjZJqCswaSt9tHyB3z1bl1OiYrlfMMYAOcmEtcD5czbHmpWNbf4ICY00kE9GADvj"
-    STRIPE_WEBHOOK_SECRET: Optional[str] = "whsec_ZnOkWbzcDeuaAfuR9tKF2BghkwoNg8O1"
+    STRIPE_SECRET_KEY: str = "sk_test_51SRLOFCSsnKFcIrSMK69e8Ut9DqMDgJ69DUHgMWUdX1VhCKDa5FMjPVcN1qCTpcUaO032gztVmbXs7nOYYaR5lwK00iI3rCP4b"
+    STRIPE_PUBLISHABLE_KEY: str = "pk_test_51SRLOFCSsnKFcIrScx4i5ujCvLop8ujF4xDjZJqCswaSt9tHyB3z1bl1OiYrlfMMYAOcmEtcD5czbHmpWNbf4ICY00kE9GADvj"
+    STRIPE_WEBHOOK_SECRET: str = "whsec_ZnOkWbzcDeuaAfuR9tKF2BghkwoNg8O1"
     
     # Payment Configuration
     MIN_CASHOUT_AMOUNT: float = 10.00  # Minimum $10 to cash out

@@ -4,6 +4,9 @@
 
 echo "Starting YesReply Backend API..."
 
+# Note: This script is for non-Poetry setups.
+# If using Poetry, run: poetry run uvicorn app.main:app --reload
+
 # Check if virtual environment exists
 if [ ! -d "venv" ]; then
     echo "Virtual environment not found. Creating one..."
@@ -23,14 +26,13 @@ fi
 # Check if .env file exists
 if [ ! -f ".env" ]; then
     echo "Warning: .env file not found. Using default configuration."
-    echo "Please create a .env file based on .env.example"
+    echo "Please create a .env file based on the SETUP.md guide"
 fi
 
-# Run migrations
-echo "Running database migrations..."
-alembic upgrade head
+# Initialize database (creates tables if they don't exist)
+echo "Initializing database..."
+python init_db.py
 
 # Start the server
 echo "Starting server on http://localhost:8000"
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
