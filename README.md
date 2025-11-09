@@ -1,6 +1,7 @@
-# YesReply 💌
 
 <div align="center">
+
+# YesReply 💌
 
 **A premium email platform where your inbox has a price tag**
 
