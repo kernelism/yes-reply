@@ -1,56 +1,301 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { Search, Send, Inbox, X, Paperclip, Smile, ArrowLeft, Star, Trash2, RefreshCw, Clock, DollarSign, BarChart3, Activity, MessageSquare, Zap, Target, TrendingUp as Flame, Trophy, Crown } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Mail, Search, Send, Inbox, X, Sun, Moon, Settings, Plus, Paperclip, Smile, ArrowLeft, Star, Trash2, RefreshCw, Reply, Forward, Clock, TrendingUp, TrendingDown, DollarSign, BarChart3, Activity, MessageSquare, User, Zap, Target, Award, TrendingUp as Flame, Timer, CircleDollarSign, Sparkles, Trophy, Crown, Medal, CheckCircle2, Wallet, LogOut, Bell } from 'lucide-react';
 import Payments from './Payments';
 import { useNavigate } from 'react-router-dom';
-import { 
-  EmojiPicker, 
-  StatCard, 
-  AchievementBadge, 
-  LineChart, 
-  Navbar, 
-  Sidebar 
-} from '../components';
 
-// Utility function to format relative time
-const formatRelativeTime = (dateString) => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const diffInSeconds = Math.floor((now - date) / 1000);
+// Simple Emoji Picker Component
+const EmojiPicker = ({ onEmojiSelect, isDark }) => {
+  const emojis = [
+    '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃',
+    '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙',
+    '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔',
+    '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '🤥',
+    '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮',
+    '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '😎', '🤓',
+    '👍', '👎', '👌', '✌️', '🤞', '🤟', '🤘', '🤙', '👏', '🙌',
+    '👋', '🤚', '🖐', '✋', '🖖', '👊', '✊', '🤛', '🤜', '🤝',
+    '🙏', '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃', '🧠',
+    '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔'
+  ];
+
+  return (
+    <div className={`absolute bottom-12 left-0 p-3 border z-10 ${
+      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+    }`}>
+      <div className="grid grid-cols-10 gap-1 max-h-48 overflow-y-auto" style={{ width: '280px' }}>
+        {emojis.map((emoji, index) => (
+          <button
+            key={index}
+            onClick={() => onEmojiSelect(emoji)}
+            className={`text-xl p-1 transition-colors ${
+              isDark ? 'hover:bg-slate-700' : 'hover:bg-slate-100'
+            }`}
+          >
+            {emoji}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// Animated Counter Component
+const AnimatedCounter = ({ value, duration = 1000, prefix = '', suffix = '', decimals = 0 }) => {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let startTime;
+    const startValue = count;
+    const endValue = parseFloat(value) || 0;
+
+    const animate = (currentTime) => {
+      if (!startTime) startTime = currentTime;
+      const progress = Math.min((currentTime - startTime) / duration, 1);
+      
+      const easeOutQuart = 1 - Math.pow(1 - progress, 4);
+      const currentCount = startValue + (endValue - startValue) * easeOutQuart;
+      
+      setCount(currentCount);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      }
+    };
+
+    requestAnimationFrame(animate);
+  }, [value]);
+
+  return (
+    <span className="font-mono tabular-nums">
+      {prefix}{count.toFixed(decimals)}{suffix}
+    </span>
+  );
+};
+
+// Achievement Badge Component
+const AchievementBadge = ({ title, description, unlocked, isDark, progress, total }) => {
+  const percentage = total ? (progress / total) * 100 : 0;
   
-  if (diffInSeconds < 60) {
-    return 'just now';
+  return (
+    <div className={`p-6 border ${
+      unlocked
+        ? isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+        : isDark ? 'bg-slate-800/50 border-slate-700/50 opacity-60' : 'bg-slate-50 border-slate-200 opacity-60'
+    }`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-2">
+            <h4 className={`font-medium text-base ${isDark ? 'text-white' : 'text-slate-900'}`}>
+              {title}
+            </h4>
+            {unlocked ? (
+              <span className={`text-xs uppercase tracking-wider px-2 py-1 ${
+                isDark ? 'bg-emerald-900/30 text-emerald-400 border border-emerald-800' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              }`}>
+                Complete
+              </span>
+            ) : (
+              <span className={`text-xs uppercase tracking-wider px-2 py-1 ${
+                isDark ? 'bg-slate-800 text-slate-500 border border-slate-700' : 'bg-slate-100 text-slate-500 border border-slate-200'
+              }`}>
+                Locked
+              </span>
+            )}
+          </div>
+          <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+            {description}
+          </p>
+          {!unlocked && (
+            <div className="mt-4">
+              {total ? (
+                <>
+                  <div className={`h-1 overflow-hidden ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+                <div 
+                  className={`h-full ${isDark ? 'bg-blue-500' : 'bg-blue-600'} transition-all duration-500`}
+                  style={{ width: `${percentage}%` }}
+                />
+              </div>
+                  <p className={`text-xs mt-2 font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                {progress} / {total}
+              </p>
+                </>
+              ) : (
+                <p className={`text-xs font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                  Not yet achieved
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Countdown Timer Component
+const CountdownTimer = ({ deadline, isDark, compact = false }) => {
+  const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0, percentage: 100 });
+
+  useEffect(() => {
+    const calculateTimeLeft = () => {
+      const now = new Date();
+      const end = new Date(deadline);
+      const diff = end - now;
+      const totalTime = 48 * 60 * 60 * 1000;
+
+      if (diff > 0) {
+        const hours = Math.floor(diff / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+        const percentage = (diff / totalTime) * 100;
+
+        setTimeLeft({ hours, minutes, seconds, percentage: Math.min(percentage, 100) });
+      } else {
+        setTimeLeft({ hours: 0, minutes: 0, seconds: 0, percentage: 0 });
+      }
+    };
+
+    calculateTimeLeft();
+    const interval = setInterval(calculateTimeLeft, 1000);
+
+    return () => clearInterval(interval);
+  }, [deadline]);
+
+  const getColorClass = () => {
+    if (timeLeft.percentage > 50) return isDark ? 'text-emerald-400' : 'text-emerald-600';
+    if (timeLeft.percentage > 25) return isDark ? 'text-amber-400' : 'text-amber-600';
+    return isDark ? 'text-red-400' : 'text-red-600';
+  };
+
+  if (compact) {
+    return (
+      <div className={`flex items-center gap-1.5 ${getColorClass()}`}>
+        <Timer size={14} />
+        <span className="text-xs font-mono tabular-nums">
+          {timeLeft.hours}h {timeLeft.minutes}m
+        </span>
+      </div>
+    );
   }
-  
-  const diffInMinutes = Math.floor(diffInSeconds / 60);
-  if (diffInMinutes < 60) {
-    return `${diffInMinutes} ${diffInMinutes === 1 ? 'minute' : 'minutes'} ago`;
-  }
-  
-  const diffInHours = Math.floor(diffInMinutes / 60);
-  if (diffInHours < 24) {
-    return `${diffInHours} ${diffInHours === 1 ? 'hour' : 'hours'} ago`;
-  }
-  
-  const diffInDays = Math.floor(diffInHours / 24);
-  if (diffInDays === 1) {
-    return 'yesterday';
-  }
-  if (diffInDays < 7) {
-    return `${diffInDays} days ago`;
-  }
-  
-  const diffInWeeks = Math.floor(diffInDays / 7);
-  if (diffInWeeks < 4) {
-    return `${diffInWeeks} ${diffInWeeks === 1 ? 'week' : 'weeks'} ago`;
-  }
-  
-  const diffInMonths = Math.floor(diffInDays / 30);
-  if (diffInMonths < 12) {
-    return `${diffInMonths} ${diffInMonths === 1 ? 'month' : 'months'} ago`;
-  }
-  
-  const diffInYears = Math.floor(diffInDays / 365);
-  return `${diffInYears} ${diffInYears === 1 ? 'year' : 'years'} ago`;
+
+  return (
+    <div className={`inline-flex items-center gap-3 px-4 py-2 border ${
+      isDark ? 'bg-slate-800/50 border-slate-700' : 'bg-slate-50 border-slate-200'
+    }`}>
+      <Timer size={16} className={getColorClass()} />
+      <div className="flex items-center gap-1 text-sm font-mono tabular-nums">
+        <span className={getColorClass()}>{String(timeLeft.hours).padStart(2, '0')}</span>
+        <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>:</span>
+        <span className={getColorClass()}>{String(timeLeft.minutes).padStart(2, '0')}</span>
+        <span className={isDark ? 'text-slate-600' : 'text-slate-400'}>:</span>
+        <span className={getColorClass()}>{String(timeLeft.seconds).padStart(2, '0')}</span>
+      </div>
+      <div className="ml-2">
+        <div className={`w-20 h-1 overflow-hidden ${isDark ? 'bg-slate-700' : 'bg-slate-200'}`}>
+          <div 
+            className={`h-full transition-all duration-1000 ${
+              timeLeft.percentage > 50 
+                ? 'bg-emerald-500' 
+                : timeLeft.percentage > 25 
+                  ? 'bg-amber-500' 
+                  : 'bg-red-500'
+            }`}
+            style={{ width: `${timeLeft.percentage}%` }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Stat Card Component
+const StatCard = ({ icon: Icon, label, value, trend, trendValue, prefix = '', suffix = '', isDark }) => {
+  return (
+    <div className={`p-8 border ${
+      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+    }`}>
+      <div className="flex items-start justify-between mb-6">
+        <div className={`p-3 ${isDark ? 'bg-slate-700 border border-slate-600' : 'bg-slate-100 border border-slate-200'}`}>
+          <Icon size={22} className={isDark ? 'text-slate-400' : 'text-slate-600'} />
+        </div>
+        {trend && (
+          <div className={`flex items-center gap-1 px-3 py-1 text-xs uppercase tracking-wider ${
+            trend === 'up'
+              ? isDark ? 'text-emerald-400 bg-emerald-900/30 border border-emerald-800' : 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+              : isDark ? 'text-red-400 bg-red-900/30 border border-red-800' : 'text-red-700 bg-red-50 border border-red-200'
+          }`}>
+            {trend === 'up' ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+            <span>{trendValue}</span>
+          </div>
+        )}
+      </div>
+      
+      <div>
+        <p className={`text-xs uppercase tracking-wider mb-3 ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+          {label}
+        </p>
+        <p className={`text-3xl font-light ${isDark ? 'text-white' : 'text-slate-900'}`}>
+          <AnimatedCounter value={value} prefix={prefix} suffix={suffix} decimals={prefix === '$' ? 2 : 0} />
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// Line Chart Component
+const LineChart = ({ data, color = '#10b981', height = 200, showDots = true, isDark }) => {
+  if (!data || data.length === 0) return null;
+
+  const padding = 20;
+  const width = 800;
+  const maxValue = Math.max(...data.map(d => d.value), 1);
+  const minValue = Math.min(...data.map(d => d.value), 0);
+  const range = maxValue - minValue || 1;
+
+  const points = data.map((d, i) => ({
+    x: padding + (i * (width - 2 * padding)) / (data.length - 1 || 1),
+    y: height - padding - ((d.value - minValue) / range) * (height - 2 * padding)
+  }));
+
+  const pathData = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+
+  return (
+    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+        <line
+          x1={padding}
+        y1={padding}
+          x2={width - padding}
+        y2={padding}
+        stroke={isDark ? '#334155' : '#e2e8f0'}
+          strokeWidth="1"
+        />
+      <line
+        x1={padding}
+        y1={height - padding}
+        x2={width - padding}
+        y2={height - padding}
+        stroke={isDark ? '#334155' : '#e2e8f0'}
+        strokeWidth="1"
+      />
+      
+      <path
+        d={pathData}
+        fill="none"
+        stroke={color}
+        strokeWidth="2"
+      />
+      
+      {showDots && points.map((p, i) => (
+        <circle
+          key={i}
+          cx={p.x}
+          cy={p.y}
+          r="3"
+          fill={color}
+        />
+      ))}
+    </svg>
+  );
 };
 
 // Generate mock analytics data
@@ -196,7 +441,7 @@ export default function YesReplyDashboard() {
   };
   
   // Fetch current user info
-  const fetchCurrentUser = useCallback(async () => {
+  const fetchCurrentUser = async () => {
     try {
       const token = getAuthToken();
       if (!token) {
@@ -217,10 +462,10 @@ export default function YesReplyDashboard() {
     } catch (error) {
       console.error('Error fetching current user:', error);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Fetch wallet balance
-  const fetchWalletBalance = useCallback(async () => {
+  const fetchWalletBalance = async () => {
     try {
       const token = getAuthToken();
       if (!token) {
@@ -241,10 +486,10 @@ export default function YesReplyDashboard() {
     } catch (error) {
       console.error('Error fetching wallet balance:', error);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Fetch notifications
-  const fetchNotifications = useCallback(async () => {
+  const fetchNotifications = async () => {
     setIsLoadingNotifications(true);
     try {
       const token = getAuthToken();
@@ -269,10 +514,10 @@ export default function YesReplyDashboard() {
     } finally {
       setIsLoadingNotifications(false);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Mark notification as read
-  const markNotificationAsRead = useCallback(async (notificationId) => {
+  const markNotificationAsRead = async (notificationId) => {
     try {
       const token = getAuthToken();
       if (!token) return;
@@ -295,10 +540,10 @@ export default function YesReplyDashboard() {
     } catch (error) {
       console.error('Error marking notification as read:', error);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Fetch inbox emails from API
-  const fetchInboxEmails = useCallback(async () => {
+  const fetchInboxEmails = async () => {
     setIsLoadingInbox(true);
     try {
       const token = getAuthToken();
@@ -317,7 +562,6 @@ export default function YesReplyDashboard() {
       if (response.ok) {
         const data = await response.json();
         setInboxEmails(data.emails || []);
-        fetchWalletBalance(); // Refresh wallet balance when receiving new emails
       } else {
         console.error('Failed to fetch inbox emails:', response.status);
       }
@@ -326,10 +570,10 @@ export default function YesReplyDashboard() {
     } finally {
       setIsLoadingInbox(false);
     }
-  }, [API_BASE_URL, fetchWalletBalance]);
+  };
   
   // Fetch starred emails from API
-  const fetchStarredEmails = useCallback(async () => {
+  const fetchStarredEmails = async () => {
     setIsLoadingStarred(true);
     try {
       const token = getAuthToken();
@@ -356,10 +600,10 @@ export default function YesReplyDashboard() {
     } finally {
       setIsLoadingStarred(false);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Fetch sent emails from API
-  const fetchSentEmails = useCallback(async () => {
+  const fetchSentEmails = async () => {
     setIsLoadingSent(true);
     try {
       const token = getAuthToken();
@@ -386,10 +630,10 @@ export default function YesReplyDashboard() {
     } finally {
       setIsLoadingSent(false);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Fetch deleted emails from API
-  const fetchDeletedEmails = useCallback(async () => {
+  const fetchDeletedEmails = async () => {
     setIsLoadingDeleted(true);
     try {
       const token = getAuthToken();
@@ -417,7 +661,7 @@ export default function YesReplyDashboard() {
     } finally {
       setIsLoadingDeleted(false);
     }
-  }, [API_BASE_URL]);
+  };
   
   // Toggle starred status
   const handleToggleStarred = async (emailId) => {
@@ -570,7 +814,6 @@ export default function YesReplyDashboard() {
         setComposeBody('');
         setComposeAttachments([]);
         fetchSentEmails();
-        fetchWalletBalance(); // Refresh wallet balance after sending email
       } else {
         const error = await sendResponse.json();
         alert(error.detail || 'Failed to send email');
@@ -625,7 +868,6 @@ export default function YesReplyDashboard() {
         setReplyText('');
         setReplyAttachments([]);
         fetchInboxEmails();
-        fetchWalletBalance(); // Refresh wallet balance after replying
         setSelectedThread(null);
         console.log('Reply sent successfully with proper threading');
       } else {
@@ -653,7 +895,7 @@ export default function YesReplyDashboard() {
     const notificationInterval = setInterval(fetchNotifications, 30000);
     
     return () => clearInterval(notificationInterval);
-  }, [fetchCurrentUser, fetchWalletBalance, fetchNotifications]);
+  }, []);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -679,7 +921,7 @@ export default function YesReplyDashboard() {
     } else if (activeView === 'deleted') {
       fetchDeletedEmails();
     }
-  }, [activeView, fetchInboxEmails, fetchStarredEmails, fetchSentEmails, fetchDeletedEmails]);
+  }, [activeView]);
 
   useEffect(() => {
     if (selectedThread) {
@@ -688,7 +930,7 @@ export default function YesReplyDashboard() {
         setSelectedThread(updatedThread);
       }
     }
-  }, [emailThreadsData, selectedThread]);
+  }, [emailThreadsData]);
 
   const toggleStarred = (threadId) => {
     handleToggleStarred(threadId);
@@ -716,7 +958,7 @@ export default function YesReplyDashboard() {
       lastEmail: isSent ? receiverEmail : senderEmail,
       recipientUsername: isSent ? receiverUsername : senderUsername, // Store actual username for replies
       preview: email.body.substring(0, 100) + (email.body.length > 100 ? '...' : ''),
-      time: formatRelativeTime(email.created_at),
+      time: new Date(email.created_at).toLocaleString(),
       unread: !email.is_read,
       starred: email.is_starred,
       important: email.priority === 'high',
@@ -728,7 +970,7 @@ export default function YesReplyDashboard() {
         sender: isSent ? 'You' : senderName,
         email: senderEmail,
         content: email.body,
-        time: formatRelativeTime(email.created_at),
+        time: new Date(email.created_at).toLocaleString(),
         earned: isSent ? 0 : 0.20,
         isSent: isSent,
         isFirstMessage: true
@@ -780,30 +1022,323 @@ export default function YesReplyDashboard() {
   return (
     <div className={`min-h-screen ${isDark ? 'bg-slate-900' : 'bg-white'}`}>
       {/* Header */}
-      <Navbar
-        isDark={isDark}
-        setIsDark={setIsDark}
-        walletBalance={walletBalance}
-        notifications={notifications}
-        unreadNotificationCount={unreadNotificationCount}
-        showNotifications={showNotifications}
-        setShowNotifications={setShowNotifications}
-        isLoadingNotifications={isLoadingNotifications}
-        markNotificationAsRead={markNotificationAsRead}
-        navigate={navigate}
-      />
+      <div className={`border-b ${isDark ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
+        <div className="px-8 py-4">
+          <div className="flex items-center justify-between">
+            {/* Logo */}
+            <div className={`flex items-center gap-3 text-xl font-semibold ${
+                    isDark ? 'text-white' : 'text-slate-900'
+            }`}>
+              <div className={`p-2 ${isDark ? 'bg-slate-800' : 'bg-slate-100'}`}>
+                <Mail size={20} />
+                  </div>
+              yesreply
+                </div>
+
+            {/* Right side controls */}
+              <div className="flex items-center gap-3">
+              {/* Wallet Balance */}
+              <div className={`flex items-center gap-2 px-4 py-2 border text-sm ${
+                isDark ? 'border-slate-800 bg-slate-800 text-slate-300' : 'border-slate-200 bg-slate-50 text-slate-700'
+              }`}>
+                <Wallet size={16} />
+                <span className="font-mono">${walletBalance.toFixed(2)}</span>
+                </div>
+
+              {/* Notifications */}
+                <div className="relative notification-dropdown">
+                  <button
+                    onClick={() => setShowNotifications(!showNotifications)}
+                  className={`relative p-2 transition-all ${
+                      isDark
+                      ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <Bell size={18} />
+                    {unreadNotificationCount > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-blue-600 text-white text-xs flex items-center justify-center font-mono">
+                      {unreadNotificationCount}
+                      </span>
+                    )}
+                  </button>
+                  
+                  {showNotifications && (
+                  <div className={`absolute right-0 mt-2 w-96 border z-50 ${
+                      isDark ? 'bg-slate-800 border-slate-700' : 'bg-white border-slate-200'
+                    }`}>
+                      <div className={`px-4 py-3 border-b ${isDark ? 'border-slate-700' : 'border-slate-200'}`}>
+                      <h3 className={`text-sm font-medium uppercase tracking-wider ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                            Notifications
+                          </h3>
+                        </div>
+                      <div className="max-h-96 overflow-y-auto">
+                        {isLoadingNotifications ? (
+                          <div className="p-8 text-center">
+                          <div className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>Loading...</div>
+                          </div>
+                        ) : notifications.length === 0 ? (
+                          <div className="p-8 text-center">
+                            <Bell size={32} className={`mx-auto mb-2 opacity-50 ${isDark ? 'text-slate-400' : 'text-slate-600'}`} />
+                            <p className={`text-sm ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>No notifications</p>
+                          </div>
+                        ) : (
+                          notifications.map((notification) => (
+                            <div
+                              key={notification.id}
+                              onClick={() => {
+                                if (!notification.is_read) {
+                                  markNotificationAsRead(notification.id);
+                                }
+                              }}
+                              className={`px-4 py-3 border-b cursor-pointer transition-all ${
+                                isDark ? 'border-slate-700 hover:bg-slate-700/50' : 'border-slate-200 hover:bg-slate-50'
+                              } ${!notification.is_read ? (isDark ? 'bg-slate-700/30' : 'bg-blue-50/30') : ''}`}
+                            >
+                              <div className="flex items-start gap-3">
+                                {!notification.is_read && (
+                                <div className="w-2 h-2 bg-blue-500 mt-2 flex-shrink-0" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <p className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-slate-900'}`}>
+                                    {notification.title}
+                                  </p>
+                                  <p className={`text-sm mb-2 ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                                    {notification.message}
+                                  </p>
+                                <p className={`text-xs font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
+                                    {new Date(notification.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setIsDark(!isDark)}
+                className={`p-2 transition-all ${
+                    isDark
+                    ? 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                >
+                  {isDark ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+
+                <button
+                  onClick={() => navigate('/profile')}
+                className={`p-2 transition-all ${
+                    isDark
+                    ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  }`}
+                  title="Profile"
+                >
+                  <User size={18} />
+                </button>
+
+                <button
+                  onClick={() => {
+                    localStorage.removeItem('access_token');
+                    navigate('/');
+                  }}
+                className={`p-2 transition-all ${
+                    isDark
+                    ? 'bg-slate-800 text-red-400 hover:bg-slate-700'
+                    : 'bg-slate-100 text-red-600 hover:bg-slate-200'
+                  }`}
+                  title="Logout"
+                >
+                  <LogOut size={18} />
+                </button>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <div className="flex h-[calc(100vh-65px)]">
         {/* SIDEBAR */}
-        <Sidebar
-          isDark={isDark}
-          activeView={activeView}
-          setActiveView={setActiveView}
-          setSelectedThread={setSelectedThread}
-          setShowCompose={setShowCompose}
-          inboxEmails={inboxEmails}
-          achievements={achievements}
-        />
+        <div
+          className={`w-64 border-r ${
+            isDark ? 'border-slate-800 bg-slate-900' : 'border-slate-200 bg-white'
+          } flex flex-col`}
+        >
+          <div className="p-4">
+            <button
+              onClick={() => setShowCompose(true)}
+              className="w-full flex items-center justify-center gap-2 px-6 py-3 font-medium text-white transition-all bg-blue-600 hover:bg-blue-700"
+            >
+              <Plus size={20} />
+              Compose
+            </button>
+          </div>
+
+          <nav className="flex-1 px-2 space-y-1">
+            <button
+              onClick={() => {
+                setActiveView('inbox');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'inbox'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Inbox size={18} />
+              <span className="font-medium">Inbox</span>
+              {inboxEmails.filter(e => !e.is_read).length > 0 && (
+                <span
+                  className={`ml-auto text-xs px-2 py-0.5 font-mono ${
+                    activeView === 'inbox'
+                      ? isDark
+                        ? 'bg-blue-600/30 text-blue-300 border border-blue-500'
+                        : 'bg-blue-100 text-blue-800 border border-blue-300'
+                      : isDark
+                      ? 'bg-slate-800 text-slate-400 border border-slate-700'
+                      : 'bg-slate-100 text-slate-600 border border-slate-200'
+                  }`}
+                >
+                  {inboxEmails.filter(e => !e.is_read).length}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('starred');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'starred'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Star size={18} />
+              <span className="font-medium">Starred</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('sent');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'sent'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Send size={18} />
+              <span className="font-medium">Sent</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('deleted');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'deleted'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Trash2 size={18} />
+              <span className="font-medium">Deleted</span>
+            </button>
+
+            <div className={`my-4 border-t ${isDark ? 'border-slate-800' : 'border-slate-200'}`} />
+
+            <button
+              onClick={() => {
+                setActiveView('analytics');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'analytics'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <BarChart3 size={18} />
+              <span className="font-medium">Analytics</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('payments');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'payments'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Wallet size={18} />
+              <span className="font-medium">Wallet</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setActiveView('achievements');
+                setSelectedThread(null);
+              }}
+              className={`w-full flex items-center gap-3 px-4 py-3 transition-all text-sm uppercase tracking-wider ${
+                activeView === 'achievements'
+                  ? isDark
+                    ? 'bg-blue-600/20 text-blue-400 border-l-2 border-blue-400'
+                    : 'bg-blue-50 text-blue-700 border-l-2 border-blue-600'
+                  : isDark
+                  ? 'text-slate-400 hover:bg-slate-800'
+                  : 'text-slate-600 hover:bg-slate-100'
+              }`}
+            >
+              <Trophy size={18} />
+              <span className="font-medium">Achievements</span>
+              {achievements.filter(a => a.unlocked).length > 0 && (
+                <span className={`ml-auto text-xs px-2 py-0.5 font-mono ${
+                  isDark 
+                    ? 'bg-blue-900/30 text-blue-400 border border-blue-800' 
+                    : 'bg-blue-50 text-blue-700 border border-blue-200'
+                }`}>
+                  {achievements.filter(a => a.unlocked).length}
+                </span>
+              )}
+            </button>
+          </nav>
+        </div>
 
         {/* MAIN CONTENT */}
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -1256,7 +1791,7 @@ export default function YesReplyDashboard() {
                               </span>
                             )}
                             <span className={`text-xs font-mono ${isDark ? 'text-slate-500' : 'text-slate-500'}`}>
-                              {formatRelativeTime(email.created_at)}
+                              {new Date(email.created_at).toLocaleString()}
                             </span>
                           </div>
                         </div>
